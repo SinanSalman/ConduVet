@@ -1,5 +1,5 @@
-title: "CTI Research data [test]"
+title: "Sample Data Vetting"
 admin_account: "admin"
-admin_pass: "admin"
+admin_pass: "password"
 backup_dir: "./backups"
 auto_logout_minutes: 30  # Optional, defaults to 30

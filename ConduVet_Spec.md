@@ -1,8 +1,8 @@
-# Conduvet — Technical Specification for Claude Code
+# ConduVet — Technical Specification
 
 ## Overview
 
-**Conduvet** is a web application that serves as a conduit for vetting crowd-sourced tabular data. It supports data collection and review workflows driven by Excel files that carry both data and schema definitions. The reference data file is `Research_Projects.xlsx`, whose structure governs all design decisions.
+**ConduVet** is a web application that serves as a conduit for vetting crowd-sourced tabular data. It supports data collection and review workflows driven by Excel files that carry both data and schema definitions.
 
 The app name is always rendered as **Instance Title**, where the title comes from the configuration file.
 
@@ -33,7 +33,6 @@ The app is configured via a YAML file. The structure is:
 title: "Instance title displayed next to app name"
 admin_account: "admin_username"
 admin_pass: "admin_password"
-users_file: "users.csv"        # path to users CSV file
 backup_dir: "./backups"        # local directory for rotating backups
 auto_logout_minutes: 30        # optional; default: 30, range: 1-480 (inactivity timeout)
 ```
@@ -152,7 +151,7 @@ After login. Functions:
   1. **Data sheet**: Current state of all records with all columns (including Owner, Record Vetter, Last Updated, Record Status, and Record ID)
   2. **Schema sheet**: Field definitions (original schema)
   3. **Edit History sheet**: Complete audit trail of all field changes with Record ID, Field Name, Old Value, New Value, Changed By (user ID), and Changed At (timestamp)
-- The file is compatible with re-uploading to a new Conduvet instance.
+- The file is compatible with re-uploading to a new ConduVet instance.
 
 **Reports**
 

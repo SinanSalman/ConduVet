@@ -7,10 +7,10 @@ import io
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 import yaml
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
 from sqlalchemy import func
@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from auth.jwt import create_access_token, get_current_admin
 from database import get_db
+from rate_limiter import limiter
+from routers._helpers import log_field_changes as _log_field_changes, record_to_response as _record_to_response
 from models.db_models import (
     AppConfig,
     AppUser,
@@ -63,7 +65,6 @@ def _validate_yaml(content: bytes) -> dict:
                 "  title: \"My Instance\"\n"
                 "  admin_account: \"admin\"\n"
                 "  admin_pass: \"secret\"\n"
-                "  users_file: \"users.csv\"\n"
                 "  backup_dir: \"./backups\"\n"
                 "Make sure the file does not start with a list (-) or a plain value."
             ),
@@ -79,9 +80,19 @@ def _validate_yaml(content: bytes) -> dict:
                 f"  title: \"Your instance title\"\n"
                 f"  admin_account: \"admin_username\"\n"
                 f"  admin_pass: \"admin_password\"\n"
-                f"  users_file: \"users.csv\"\n"
                 f"  backup_dir: \"./backups\"\n"
                 f"Optional: auto_logout_minutes: 30 (default: 30, range: 1-480)"
+            ),
+        )
+
+    # Validate admin_pass minimum length
+    admin_pass = str(data.get("admin_pass", "")).strip()
+    if len(admin_pass) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "admin_pass must be at least 6 characters long. "
+                "Choose a strong password to protect admin access."
             ),
         )
 
@@ -154,45 +165,6 @@ def _parse_users_csv(content: bytes) -> list[dict]:
     return users
 
 
-def _record_to_response(record: DataRecord) -> dict:
-    return {
-        "id": record.id,
-        "owner": record.owner,
-        "vetter": record.vetter,
-        "record_status": record.record_status,
-        "last_updated": record.last_updated.isoformat() if record.last_updated else None,
-        "created_at": record.created_at.isoformat() if record.created_at else None,
-        "data": record.record_data or {},
-    }
-
-
-def _log_field_changes(
-    db: Session,
-    record: DataRecord,
-    new_data: dict,
-    changed_by: str,
-):
-    """Compare old_data vs new_data and write FieldHistory rows for every change."""
-    old_data = record.record_data or {}
-    all_keys = set(old_data.keys()) | set(new_data.keys())
-    now = datetime.now(timezone.utc)
-    for key in all_keys:
-        old_val = old_data.get(key)
-        new_val = new_data.get(key)
-        if str(old_val) != str(new_val):
-            db.add(
-                FieldHistory(
-                    record_id=record.id,
-                    file_id=record.file_id,
-                    field_name=key,
-                    old_value=str(old_val) if old_val is not None else None,
-                    new_value=str(new_val) if new_val is not None else None,
-                    changed_by=changed_by,
-                    changed_at=now,
-                )
-            )
-
-
 # ---------------------------------------------------------------------------
 # GET /status — no auth
 # ---------------------------------------------------------------------------
@@ -258,7 +230,9 @@ async def setup(
 # ---------------------------------------------------------------------------
 
 @router.post("/login")
+@limiter.limit("10/minute")
 async def admin_login(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
@@ -379,46 +353,6 @@ async def update_config_users(
 
     db.commit()
     return {"ok": True, "user_count": len(users)}
-
-
-# ---------------------------------------------------------------------------
-# POST /config — kept for backwards compatibility (admin auth)
-# ---------------------------------------------------------------------------
-
-@router.post("/config")
-async def update_config(
-    yaml_file: UploadFile = File(...),
-    users_file: Optional[UploadFile] = File(None),
-    _admin=Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    config = db.query(AppConfig).first()
-    if config is None:
-        raise HTTPException(status_code=404, detail="Not configured")
-
-    yaml_content = await yaml_file.read()
-    config_data = _validate_yaml(yaml_content)
-
-    config.title = str(config_data["title"])
-    config.admin_account = str(config_data["admin_account"])
-    config.admin_pass_hash = pwd_context.hash(str(config_data["admin_pass"]))
-
-    if users_file is not None:
-        users_content = await users_file.read()
-        users = _parse_users_csv(users_content)
-
-        users_dir = os.path.dirname(config.users_file_path or "/data/users/users.csv")
-        os.makedirs(users_dir, exist_ok=True)
-        with open(config.users_file_path or os.path.join(users_dir, "users.csv"), "wb") as fh:
-            fh.write(users_content)
-
-        db.query(AppUser).delete()
-        for u in users:
-            pwd_hash = pwd_context.hash(u["password"]) if u["password"] else pwd_context.hash("")
-            db.add(AppUser(userid=u["userid"], name=u["name"], password_hash=pwd_hash))
-
-    db.commit()
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +624,7 @@ def batch_update_records(
             continue
 
         new_data = update.get("data", {})
-        _log_field_changes(db, record, new_data, changed_by)
+        _log_field_changes(db, record, new_data, changed_by, now)
 
         record.record_data = new_data
         if "record_status" in update:
@@ -704,7 +638,11 @@ def batch_update_records(
         record.last_updated = now
         updated_ids.append(record_id)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save records. Please try again.")
     return {"ok": True, "updated": len(updated_ids)}
 
 

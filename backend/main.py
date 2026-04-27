@@ -1,18 +1,24 @@
 """
-Conduvet — FastAPI application entry point.
+ConduVet — FastAPI application entry point.
 """
 
+import logging
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
+logger = logging.getLogger("conduvet")
+
 from database import Base, SessionLocal, engine
 from models import db_models  # noqa: F401 — ensure models are imported before create_all
+from rate_limiter import limiter
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.data import router as data_router
@@ -105,16 +111,21 @@ def _run_migrations():
         fk_info = result.fetchone()
         if fk_info:
             fk_name = fk_info[0]
-            # Check if the constraint already has CASCADE delete
+            # Validate constraint name — must be a safe identifier before embedding in DDL
+            import re as _re
+            if not _re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', fk_name):
+                raise RuntimeError(f"Unexpected constraint name format: {fk_name!r}")
+            # Check if the constraint already has CASCADE delete (parameterised — no interpolation)
             cascade_check = conn.execute(
                 text(
-                    f"SELECT delete_rule FROM information_schema.referential_constraints "
-                    f"WHERE constraint_name = '{fk_name}'"
-                )
+                    "SELECT delete_rule FROM information_schema.referential_constraints "
+                    "WHERE constraint_name = :fk_name"
+                ).bindparams(fk_name=fk_name)
             )
             cascade_rule = cascade_check.fetchone()
             if cascade_rule and cascade_rule[0] != 'CASCADE':
-                # Drop and recreate the foreign key with CASCADE
+                # Drop and recreate the foreign key with CASCADE.
+                # fk_name is validated as a safe identifier above.
                 conn.execute(
                     text(f"ALTER TABLE field_history DROP CONSTRAINT {fk_name}")
                 )
@@ -133,15 +144,37 @@ _run_migrations()
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="Conduvet",
+    title="ConduVet",
     description="Crowd-sourced tabular data vetting platform",
     version="1.0.0",
 )
 
+# Attach rate limiter and its 429 error handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ---------------------------------------------------------------------------
+# Security startup checks
+# ---------------------------------------------------------------------------
+_WEAK_SECRETS = {"conduvet-secret-key-change-in-production", "change-this-in-production", "secret"}
+_secret = os.getenv("SECRET_KEY", "")
+if not _secret or _secret in _WEAK_SECRETS:
+    logger.warning(
+        "⚠️  SECRET_KEY is not set or is using a known default value. "
+        "Set a strong random SECRET_KEY in your environment before deploying to production. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
+if not CORS_ORIGINS:
+    logger.warning(
+        "⚠️  CORS_ORIGINS is not set. Defaulting to http://localhost:3000. "
+        "Set CORS_ORIGINS in your environment to the frontend origin(s) for your deployment."
+    )
+    CORS_ORIGINS = "http://localhost:3000"
 origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()] if CORS_ORIGINS != "*" else ["*"]
 
 app.add_middleware(

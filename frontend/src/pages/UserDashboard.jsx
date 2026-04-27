@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getUserFiles, clearUserToken } from '../api'
+import { getUserFiles, clearUserToken, getUserName } from '../api'
 
 export default function UserDashboard() {
   const navigate = useNavigate()
@@ -8,7 +8,7 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const userName = localStorage.getItem('conduvet_user_name') || 'User'
+  const userName = getUserName() || 'User'
 
   useEffect(() => {
     getUserFiles()

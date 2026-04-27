@@ -53,7 +53,7 @@ export default function AdminSetup() {
         </div>
 
         <p className="text-gray-600 text-sm mb-6">
-          Welcome to Conduvet. Before you can use this application, please upload
+          Welcome to ConduVet. Before you can use this application, please upload
           your configuration YAML file and initial users CSV file.
         </p>
 

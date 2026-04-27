@@ -29,7 +29,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 // System columns are managed explicitly in buildColumnDefs.
 // They must be excluded from the schema-driven loop to prevent duplicates,
 // because some workbooks include these fields in their Schema sheet as well.
-const SYSTEM_FIELD_NAMES = new Set(['owner', 'vetter', 'last updated', 'record status'])
+const SYSTEM_FIELD_NAMES = new Set(['owner', 'vetter', 'record vetter', 'last updated', 'record status'])
 
 // Lowercase name of the vetting status field as it appears in the schema.
 // Matched case-insensitively so any casing in the Excel sheet works.
@@ -339,7 +339,7 @@ export default function DataEntry({ isAdmin = false }) {
     load()
   }, [fileId, isAdmin])
 
-  // Periodically refresh records to detect changes from other users
+  // Periodically refresh records and lock status to detect changes from other users
   useEffect(() => {
     const refreshInterval = setInterval(async () => {
       try {
@@ -367,6 +367,18 @@ export default function DataEntry({ isAdmin = false }) {
       } catch (err) {
         // Silently fail refresh — it's not critical
         console.error('Failed to refresh records:', err)
+      }
+
+      // Also refresh lock status so users see up-to-date lock info
+      if (!isAdmin) {
+        try {
+          const locks = await getFileLocks(fileId)
+          const lockMap = {}
+          locks.forEach(lock => { lockMap[lock.id] = lock })
+          setRecordLocks(lockMap)
+        } catch (err) {
+          // Silently fail — lock info is informational
+        }
       }
     }, 10000) // Refresh every 10 seconds
 

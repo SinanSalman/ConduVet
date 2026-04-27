@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from auth.jwt import get_current_user
 from database import get_db
 from models.db_models import AppConfig, AppUser, DataFile, DataRecord, FieldHistory, SchemaDefinition
+from routers._helpers import log_field_changes as _log_field_changes, record_to_response as _record_to_response_base
 from services.schema_parser import validate_cell
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -20,9 +21,10 @@ router = APIRouter(prefix="/api", tags=["data"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Field name (lowercase) used to identify the vetting status column in the schema.
-# This matches case-insensitively so the Excel column heading can use any casing.
-_VETTING_STATUS_FIELD = "record vetting status"
+# All lowercase names that identify the vetting-status column.
+# Includes both the current name ("vetting status") and the legacy name
+# ("record vetting status") so existing workbooks continue to work.
+_VETTING_STATUS_FIELDS = {"vetting status", "record vetting status"}
 
 
 def _normalize_date_values(data: dict) -> dict:
@@ -65,44 +67,10 @@ def _normalize_date_values(data: dict) -> dict:
 
 
 def _record_to_response(record: DataRecord) -> dict:
-    return {
-        "id": record.id,
-        "owner": record.owner,
-        "vetter": record.vetter,
-        "record_status": record.record_status,
-        "last_updated": record.last_updated.isoformat() if record.last_updated else None,
-        "created_at": record.created_at.isoformat() if record.created_at else None,
-        "is_locked": record.is_locked,
-        "locked_by": record.locked_by,
-        "locked_at": record.locked_at.isoformat() if record.locked_at else None,
-        "data": _normalize_date_values(record.record_data or {}),
-    }
-
-
-def _log_field_changes(
-    db: Session,
-    record: DataRecord,
-    new_data: dict,
-    changed_by: str,
-    now: datetime,
-):
-    old_data = record.record_data or {}
-    all_keys = set(old_data.keys()) | set(new_data.keys())
-    for key in all_keys:
-        old_val = old_data.get(key)
-        new_val = new_data.get(key)
-        if str(old_val) != str(new_val):
-            db.add(
-                FieldHistory(
-                    record_id=record.id,
-                    file_id=record.file_id,
-                    field_name=key,
-                    old_value=str(old_val) if old_val is not None else None,
-                    new_value=str(new_val) if new_val is not None else None,
-                    changed_by=changed_by,
-                    changed_at=now,
-                )
-            )
+    """Thin wrapper around the shared helper: normalises date values for display."""
+    base = _record_to_response_base(record)
+    base["data"] = _normalize_date_values(base["data"])
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +234,12 @@ def create_new_record(
         created_at=now,
     )
     db.add(record)
-    db.commit()
-    db.refresh(record)
+    try:
+        db.commit()
+        db.refresh(record)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create record. Please try again.")
     return _record_to_response(record)
 
 
@@ -333,7 +305,7 @@ def submit_records(
         for field_name, schema_def in schema_by_name.items():
             # Skip vetting status validation when the submitter is not the vetter —
             # the backend will restore the existing value, so the submitted one is ignored.
-            if field_name.lower() == _VETTING_STATUS_FIELD and not is_vetter:
+            if field_name.lower() in _VETTING_STATUS_FIELDS and not is_vetter:
                 continue
             value = data.get(field_name)
             error = validate_cell(value, schema_def, data)
@@ -352,7 +324,7 @@ def submit_records(
     # --- Persist pass -------------------------------------------------------
     # Fields that live as proper DB columns, not inside record_data JSONB.
     # Strip them from data submissions to prevent stale values in JSONB.
-    _SYSTEM_DATA_FIELDS = {"owner", "vetter", "last updated"}
+    _SYSTEM_DATA_FIELDS = {"owner", "vetter", "record vetter", "last updated"}
 
     saved = 0
     saved_record_ids = []  # Track which records were successfully saved for unlocking
@@ -379,22 +351,22 @@ def submit_records(
         new_data = {k: v for k, v in new_data.items()
                     if k.lower() not in _SYSTEM_DATA_FIELDS}
 
-        # Only the assigned vetter may change the Record Vetting Status field.
+        # Only the assigned vetter may change the vetting status field.
         # If the submitter is NOT the vetter, silently preserve the existing value.
         if not user_is_vetter:
             existing_vetting = (record.record_data or {}).get(
                 next((k for k in (record.record_data or {})
-                      if k.lower() == _VETTING_STATUS_FIELD), None)
+                      if k.lower() in _VETTING_STATUS_FIELDS), None)
             )
             # Remove any vetting-status key the owner might have submitted, then
             # restore the current DB value (if one exists) so it is not lost.
             new_data = {k: v for k, v in new_data.items()
-                        if k.lower() != _VETTING_STATUS_FIELD}
+                        if k.lower() not in _VETTING_STATUS_FIELDS}
             if existing_vetting is not None:
                 # Find the canonical key name stored in DB and re-insert it
                 canonical_key = next(
                     (k for k in (record.record_data or {})
-                     if k.lower() == _VETTING_STATUS_FIELD),
+                     if k.lower() in _VETTING_STATUS_FIELDS),
                     None,
                 )
                 if canonical_key:
@@ -412,16 +384,28 @@ def submit_records(
         saved += 1
         saved_record_ids.append(record.id)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save records. Please try again.")
 
-    # Unlock records after successful submission
-    for record_id in saved_record_ids:
-        record = records_by_id.get(record_id)
-        if record and record.is_locked and record.locked_by and record.locked_by.upper() == userid:
-            record.is_locked = False
-            record.locked_by = None
-            record.locked_at = None
-    db.commit()
+    # Unlock records after successful submission.
+    # Re-query to avoid using stale in-memory objects from before the commit.
+    if saved_record_ids:
+        try:
+            db.query(DataRecord).filter(
+                DataRecord.id.in_(saved_record_ids),
+                DataRecord.is_locked.is_(True),
+                DataRecord.locked_by == userid,
+            ).update(
+                {"is_locked": False, "locked_by": None, "locked_at": None},
+                synchronize_session=False,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            # Non-fatal — data is saved; only unlock failed
 
     return {"ok": True, "saved": saved}
 
@@ -464,11 +448,10 @@ def get_field_history(
         .all()
     )
 
-    # Resolve userids to display names in one query
+    # Resolve userids to display names in one query (AppUser imported at module level)
     userids = list({h.changed_by for h in history if h.changed_by})
     name_map: dict[str, str] = {}
     if userids:
-        from models.db_models import AppUser
         rows = db.query(AppUser.userid, AppUser.name).filter(AppUser.userid.in_(userids)).all()
         name_map = {r.userid: r.name for r in rows}
 
@@ -508,9 +491,11 @@ def lock_record(
         - 409: Record locked by another user
         - 404: Record not found
     """
+    # Use SELECT ... FOR UPDATE to prevent concurrent lock acquisition (row-level lock)
     record = (
         db.query(DataRecord)
         .filter(DataRecord.id == record_id, DataRecord.file_id == file_id)
+        .with_for_update()
         .first()
     )
     if not record:
@@ -532,11 +517,15 @@ def lock_record(
             headers={"X-Locked-By": record.locked_by},
         )
 
-    # Lock the record
+    # Lock the record (atomic — held under FOR UPDATE row lock until commit)
     record.is_locked = True
     record.locked_by = userid
     record.locked_at = datetime.now(timezone.utc)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to lock record. Please try again.")
 
     return {"ok": True, "locked_by": userid}
 
@@ -577,7 +566,11 @@ def unlock_record(
     record.is_locked = False
     record.locked_by = None
     record.locked_at = None
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to unlock record. Please try again.")
 
     return {"ok": True}
 
@@ -642,38 +635,25 @@ def delete_record(
     if not record.vetter:
         raise HTTPException(
             status_code=403,
-            detail=f"This record has no assigned vetter. You are '{userid}'. Only the assigned vetter can delete a record.",
+            detail="This record has no assigned vetter. Only the assigned vetter can delete a record.",
         )
 
     vetter_upper = record.vetter.strip().upper() if record.vetter else None
     if vetter_upper != userid:
         raise HTTPException(
             status_code=403,
-            detail=f"You are '{userid}' but this record is assigned to vetter '{vetter_upper}'. Only the assigned vetter can delete this record.",
+            detail="You may only delete records assigned to you as a vetter.",
         )
 
-    # First, delete all existing field_history records for this record
-    # This prevents foreign key constraint violation when deleting the record
-    db.query(FieldHistory).filter(FieldHistory.record_id == record.id).delete()
-
-    # Record the deletion in FieldHistory as an audit trail
-    # This creates a final entry documenting the deletion action
-    now = datetime.now(timezone.utc)
-    for field_key in (record.record_data or {}).keys():
-        db.add(
-            FieldHistory(
-                record_id=record.id,
-                file_id=file_id,
-                field_name=field_key,
-                old_value=str(record.record_data[field_key]),
-                new_value="[RECORD DELETED]",
-                changed_by=userid,
-                changed_at=now,
-            )
-        )
-
-    # Delete the record
+    # Delete the record; ON DELETE CASCADE removes associated field_history rows automatically.
+    # NOTE: do not attempt to insert new FieldHistory rows referencing this record_id after
+    # deletion — CASCADE would remove them as well (record_id is a NOT NULL FK).
+    # The pre-deletion edit history remains in the database until the CASCADE fires at commit.
     db.delete(record)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete record. Please try again.")
 
     return {"ok": True, "deleted_record_id": record_id}

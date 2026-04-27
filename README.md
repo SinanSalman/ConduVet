@@ -50,7 +50,7 @@ A web application for vetting crowd-sourced tabular data. Admins upload Excel wo
 ## Project Structure
 
 ```
-Conduvet/
+ConduVet/
 ├── backend/
 │   ├── main.py                   # FastAPI app, CORS, middleware
 │   ├── database.py               # SQLAlchemy engine and session
@@ -106,7 +106,7 @@ Conduvet/
 
 ```bash
 # 1. Clone or copy the project
-cd /path/to/Conduvet
+cd /path/to/ConduVet
 
 # 2. Set a strong secret key in docker-compose.yml
 #    Change the SECRET_KEY value under the backend service; you could use the output of the below:
@@ -289,7 +289,7 @@ Access the admin interface at `/admin/login` (link in the top-right corner of ev
 | Action | Effect |
 |---|---|
 | **View / Edit** | Opens the AG Grid for that file. Admins see all records (not filtered by owner) and the Owner column is editable. |
-| **Download** | Downloads the current state as an Excel workbook (Data + Schema sheets) that can be re-uploaded to any Conduvet instance. |
+| **Download** | Downloads the current state as an Excel workbook (Data + Schema sheets) that can be re-uploaded to any ConduVet instance. |
 | **Remove** | Soft-deletes the file (data is retained in the database, the file is removed from the active list). |
 
 ### Reports Tab

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { userLogin, setUserToken, setUserId } from '../api'
+import { userLogin, setUserToken, setUserId, setUserName, getAppTitle } from '../api'
 
 export default function UserLogin() {
   const navigate = useNavigate()
@@ -9,7 +9,7 @@ export default function UserLogin() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const title = localStorage.getItem('conduvet_title') || ''
+  const title = getAppTitle()
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -19,7 +19,7 @@ export default function UserLogin() {
       const data = await userLogin(username, password)
       setUserToken(data.access_token)
       if (data.name) {
-        localStorage.setItem('conduvet_user_name', data.name)
+        setUserName(data.name)
       }
       if (data.userid) {
         setUserId(data.userid)

@@ -61,7 +61,7 @@ export function parseDataType(dataType) {
  *
  * Returns: [{ field: string, values: string[] }, ...]
  */
-export function parseDependsOn(dependsOn) {
+function parseDependsOn(dependsOn) {
   if (!dependsOn || !dependsOn.trim()) return []
 
   const conditions = []

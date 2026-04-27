@@ -1,6 +1,6 @@
-# Conduvet User Manual
+# ConduVet User Manual
 
-Welcome to Conduvet! This manual will guide you through all the features of the application and help you work effectively with your datasets.
+Welcome to ConduVet! This manual will guide you through all the features of the application and help you work effectively with your datasets.
 
 ---
 
@@ -29,7 +29,7 @@ Welcome to Conduvet! This manual will guide you through all the features of the 
 
 ### First Time Login
 
-1. Navigate to the Conduvet login page
+1. Navigate to the ConduVet login page
 2. Enter your **User ID** and **Password**
 3. Click **Login**
 4. You will be redirected to the main dashboard
@@ -417,13 +417,13 @@ A: Don't panic! You can re-edit the record and submit the corrected version. The
 A: No, you must click the Submit button to save. Clicking away or timing out will lose unsaved changes.
 
 **Q: Can I work offline?**  
-A: No, Conduvet requires an internet connection and an active session to work.
+A: No, ConduVet requires an internet connection and an active session to work.
 
 ---
 
 ## Summary
 
-Conduvet is designed to make collaborative data entry and vetting efficient and transparent:
+ConduVet is designed to make collaborative data entry and vetting efficient and transparent:
 
 - **Edit your records** easily with guided validation
 - **See all changes** in the detailed edit history

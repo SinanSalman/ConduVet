@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* AG Grid CSS is imported via main.jsx (JS import) so Vite resolves the
+   bare module specifier correctly — do NOT re-import it here. */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.ag-theme-alpine .ag-cell-invalid {
+  background-color: #fee2e2 !important;
+}

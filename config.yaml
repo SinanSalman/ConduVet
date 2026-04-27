@@ -1,0 +1,5 @@
+title: "CTI Research data [test]"
+admin_account: "admin"
+admin_pass: "admin"
+backup_dir: "./backups"
+auto_logout_minutes: 30  # Optional, defaults to 30

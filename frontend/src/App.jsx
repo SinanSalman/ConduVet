@@ -11,7 +11,7 @@ import UserDashboard from './pages/UserDashboard'
 import DataEntry from './pages/DataEntry'
 
 const APP_VERSION = '0.1'
-const GITHUB_URL  = 'https://github.com/conduvet/conduvet'
+const GITHUB_URL  = 'https://github.com/SinanSalman/ConduVet'
 
 // ── Route guards ──────────────────────────────────────────────────────────────
 

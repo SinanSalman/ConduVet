@@ -22,9 +22,29 @@ router = APIRouter(prefix="/api", tags=["data"])
 # ---------------------------------------------------------------------------
 
 # All lowercase names that identify the vetting-status column.
-# Includes both the current name ("vetting status") and the legacy name
-# ("record vetting status") so existing workbooks continue to work.
-_VETTING_STATUS_FIELDS = {"vetting status", "record vetting status"}
+# Includes the current name ("vetted" — boolean) and legacy names
+# ("vetting status", "record vetting status") so existing workbooks
+# continue to work without modification.
+_VETTING_STATUS_FIELDS = {"vetted", "vetting status", "record vetting status"}
+
+
+def _is_record_vetted(record: DataRecord) -> bool:
+    """Return True if the record's vetting-status field is truthy.
+
+    Handles both the new boolean form (True / "true" / "1" / "yes") and the
+    legacy list form (the literal string "Vetted").
+    """
+    data = record.record_data or {}
+    for key, value in data.items():
+        if key.lower() not in _VETTING_STATUS_FIELDS:
+            continue
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        s = str(value).strip().lower()
+        return s in ("true", "1", "yes", "vetted")
+    return False
 
 
 def _normalize_date_values(data: dict) -> dict:
@@ -235,6 +255,18 @@ def create_new_record(
     )
     db.add(record)
     try:
+        db.flush()  # assign record.id before logging history
+        db.add(
+            FieldHistory(
+                record_id=record.id,
+                file_id=file_id,
+                field_name="_ROW_ADDED",
+                old_value=None,
+                new_value=None,
+                changed_by=userid,
+                changed_at=now,
+            )
+        )
         db.commit()
         db.refresh(record)
     except Exception:
@@ -299,6 +331,18 @@ def submit_records(
             and bool(record.vetter)
             and record.vetter.upper() == userid
         )
+
+        # Vetted-lock: once the vetter marks the record as vetted, the owner
+        # may no longer submit changes. Only the vetter (who can also unset
+        # `vetted`) can edit a vetted record.
+        if record is not None and not is_vetter and _is_record_vetted(record):
+            field_errors[str(record_id)] = {
+                "_record": (
+                    "This record has been marked as vetted by the vetter and is "
+                    "now locked. Ask the vetter to unset 'Vetted' before editing."
+                )
+            }
+            continue
 
         # Validate each field
         errors_for_record: dict[str, str] = {}
@@ -375,11 +419,22 @@ def submit_records(
         _log_field_changes(db, record, new_data, userid, now)
 
         record.record_data = new_data
+        old_status = record.record_status
         new_status = submission.get("record_status")
         if new_status:
             record.record_status = new_status
         elif record.record_status in ("Unvetted", "New"):
             record.record_status = "Updated"
+        if record.record_status != old_status:
+            db.add(FieldHistory(
+                record_id=record.id,
+                file_id=record.file_id,
+                field_name="Record Status",
+                old_value=old_status,
+                new_value=record.record_status,
+                changed_by=userid,
+                changed_at=now,
+            ))
         record.last_updated = now
         saved += 1
         saved_record_ids.append(record.id)
@@ -509,6 +564,14 @@ def lock_record(
     if not user_is_owner and not user_is_vetter:
         raise HTTPException(status_code=403, detail="You don't have permission to lock this record")
 
+    # Vetted-lock: owners cannot lock (and therefore cannot edit) a record that
+    # the vetter has already marked as vetted. The vetter must unset 'Vetted' first.
+    if user_is_owner and not user_is_vetter and _is_record_vetted(record):
+        raise HTTPException(
+            status_code=423,
+            detail="This record has been marked as vetted and is locked. Ask the vetter to unset 'Vetted' before editing.",
+        )
+
     # If already locked by another user, return conflict
     if record.is_locked and record.locked_by and record.locked_by.upper() != userid:
         raise HTTPException(
@@ -601,6 +664,8 @@ def get_file_locks(
             "id": r.id,
             "locked_by": r.locked_by,
             "locked_at": r.locked_at.isoformat() if r.locked_at else None,
+            "is_vetted": _is_record_vetted(r),
+            "vetter": r.vetter,
         }
         for r in locked_records
     ]
@@ -645,10 +710,20 @@ def delete_record(
             detail="You may only delete records assigned to you as a vetter.",
         )
 
-    # Delete the record; ON DELETE CASCADE removes associated field_history rows automatically.
-    # NOTE: do not attempt to insert new FieldHistory rows referencing this record_id after
-    # deletion — CASCADE would remove them as well (record_id is a NOT NULL FK).
-    # The pre-deletion edit history remains in the database until the CASCADE fires at commit.
+    # Log a deletion event before removing the record.
+    # record_id is set to None because the record will be gone after commit;
+    # the original record ID is stored in old_value for reference in the history export.
+    db.add(
+        FieldHistory(
+            record_id=None,
+            file_id=file_id,
+            field_name="_ROW_DELETED",
+            old_value=str(record.id),
+            new_value=None,
+            changed_by=userid,
+            changed_at=datetime.now(timezone.utc),
+        )
+    )
     db.delete(record)
     try:
         db.commit()

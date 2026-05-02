@@ -18,13 +18,14 @@ A web application for vetting crowd-sourced tabular data. Admins upload Excel wo
 - [Environment Variables](#environment-variables)
 - [Automatic Backups](#automatic-backups)
 - [Authentication & Security](#authentication--security)
+- [License & Copyright](#license--copyright)
 
 ---
 
 ## How It Works
 
 1. The admin uploads a **YAML config** (title, credentials) and a **users CSV** (userid, name, password) on first launch.
-2. The admin uploads one or more **Excel workbooks**. Each workbook has a `Data` sheet (the records) and a `Schema` sheet (field definitions, validation rules, help text).
+2. The admin uploads one or more **Excel workbooks**. Each workbook has a `Data` sheet (the records), a `Schema` sheet (field definitions, validation rules, help text), and an optional `Edit History` sheet (pre-existing audit trail).
 3. Users log in and see the files assigned to them. They open a file, edit their records in a spreadsheet-like grid, and submit.
 4. The grid enforces the schema in real time — field types, allowed values, length limits, and conditional requirements.
 5. Every submitted change is written to the audit log. The admin can view reports, download the current data as Excel, and re-upload the file to a new instance at any time.
@@ -52,8 +53,9 @@ A web application for vetting crowd-sourced tabular data. Admins upload Excel wo
 ```
 ConduVet/
 ├── backend/
-│   ├── main.py                   # FastAPI app, CORS, middleware
+│   ├── main.py                   # FastAPI app, CORS, middleware, migrations
 │   ├── database.py               # SQLAlchemy engine and session
+│   ├── rate_limiter.py           # slowapi rate limiter
 │   ├── auth/
 │   │   ├── jwt.py                # Token creation and verification
 │   │   └── ldap_stub.py          # Pluggable auth provider interface
@@ -62,9 +64,10 @@ ConduVet/
 │   ├── routers/
 │   │   ├── admin.py              # /api/admin/* routes
 │   │   ├── auth.py               # /api/auth/login
-│   │   └── data.py               # /api/files/* user routes
+│   │   ├── data.py               # /api/files/* user routes
+│   │   └── _helpers.py           # Shared helpers (field history logging, record response)
 │   ├── services/
-│   │   ├── excel_service.py      # Excel import / export
+│   │   ├── excel_service.py      # Excel import / export (Data + Schema + Edit History)
 │   │   ├── backup_service.py     # Scheduled backup jobs
 │   │   └── schema_parser.py      # Data type and depends-on parsing
 │   ├── Dockerfile
@@ -72,20 +75,21 @@ ConduVet/
 ├── frontend/
 │   ├── src/
 │   │   ├── api.js                # Axios API client
-│   │   ├── App.jsx               # Router and layout
+│   │   ├── App.jsx               # Router, layout, auto-logout hook
 │   │   ├── pages/
 │   │   │   ├── AdminSetup.jsx
 │   │   │   ├── AdminLogin.jsx
 │   │   │   ├── AdminDashboard.jsx
 │   │   │   ├── UserLogin.jsx
 │   │   │   ├── UserDashboard.jsx
-│   │   │   └── DataEntry.jsx     # AG Grid data entry
+│   │   │   └── DataEntry.jsx     # AG Grid data entry with locking and vetting
 │   │   ├── components/
 │   │   │   ├── ContextPanel.jsx  # Field help + edit history
-│   │   │   ├── MultiSelectEditor.jsx  # Custom checkbox grid editor
 │   │   │   └── ReportViewer.jsx
+│   │   ├── hooks/
+│   │   │   └── useSessionTimeout.js  # Inactivity-based auto-logout
 │   │   └── utils/
-│   │       └── schemaHelpers.js  # Client-side type parsing and validation
+│   │       └── schemaHelpers.jsx # Client-side type parsing, validation, boolean coercion
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
@@ -182,15 +186,17 @@ admin_account: "admin"
 admin_pass: "choose-a-strong-password"
 users_file: "users.csv"
 backup_dir: "./backups"
+auto_logout_minutes: 30
 ```
 
 | Key | Description |
 |---|---|
-| `title` | Shown in the header as **title**. Supports multi-line strings with `\n`. |
+| `title` | Shown in the header. |
 | `admin_account` | Username for the admin login at `/admin/login`. |
 | `admin_pass` | Admin password. Stored as a bcrypt hash. |
-| `users_file` | Path to the users CSV (used as a label; the file is uploaded alongside the YAML). |
+| `users_file` | Path label for the users CSV (the file is uploaded alongside the YAML). |
 | `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. |
+| `auto_logout_minutes` | Inactivity timeout in minutes (default: 30, range: 1–480). |
 
 ### 2. Prepare `users.csv`
 
@@ -214,21 +220,22 @@ Go to `/admin/setup`, upload both files, and click **Save Configuration**. You w
 
 ## Excel File Format
 
-Every workbook uploaded by the admin must contain exactly two sheets.
+Every workbook uploaded by the admin must contain the following sheets.
 
-### Sheet: `Data`
+### Sheet: `Data` (required)
 
 The records to be reviewed. First row is the header. Required system columns:
 
 | Column | Description |
 |---|---|
 | `Owner` | User ID of the record owner, or `ALL` for all users. Hidden from users. |
+| `Record Vetter` | User ID of the assigned vetter. |
 | `Last Updated` | Auto-populated on submit. Format: `DD/MM/YYYY HH:MM:SS`. |
 | `Record Status` | `New`, `Updated`, `Old`, or `Delete`. Existing records default to `Old` on upload. |
 
 All other columns are defined by the Schema sheet.
 
-### Sheet: `Schema`
+### Sheet: `Schema` (required)
 
 One row per data field.
 
@@ -248,26 +255,34 @@ One row per data field.
 | `Text (255)` | Text input, max 255 characters |
 | `Number (0,100)` | Numeric input, value must be in [0, 100] |
 | `List (A,B,C)` | Single-select dropdown |
-| `Multiple (A,B,C)` | Multi-select checkbox popup; stored as comma-separated values |
+| `Multiple (A,B,C)` | Multi-select; stored as comma-separated values |
+| `Boolean` | Checkbox (true/false). Accepts `true`/`false`, `1`/`0`, `yes`/`no` |
 | `Date (DD/MM/YYYY)` | Date picker |
 | `Date (DD/MM/YYYY HH:MM:SS)` | Datetime picker |
 
 #### Depends On Syntax
 
-Makes a field conditionally required based on the value of another field. Even if `Accept Null Values` is `Yes`, the field becomes required when the condition is met.
+Makes a field conditionally required based on the value of another field.
 
 ```
 FieldName = value
 FieldName = value1 or value2
 ```
 
-Examples:
-```
-Joint Industry Research Indicator = Y
-Type of industry contribution = F or B
-```
+### Sheet: `Edit History` (optional)
 
-Multiple conditions can be placed on separate lines; any matching condition makes the field required.
+If present, this sheet is imported as the initial edit history for the dataset. Columns:
+
+| Column | Description |
+|---|---|
+| `Record ID` | Original record ID (remapped to new IDs on import) |
+| `Field Name` | Field that was changed |
+| `Old Value` | Previous value |
+| `New Value` | New value |
+| `Changed By` | User ID |
+| `Changed At` | Timestamp |
+
+This sheet is always included in downloads and backups, making workbooks fully portable.
 
 ---
 
@@ -281,32 +296,36 @@ Access the admin interface at `/admin/login` (link in the top-right corner of ev
 
 1. Click **Upload Excel File** or drag a workbook onto the drop zone.
 2. The app validates that both sheets exist and that every Schema field matches a Data column.
-3. Field-level error messages are shown if validation fails.
-4. On success, the file appears in the file list with its record count.
+3. If an `Edit History` sheet is present, it is imported as the audit trail for the dataset.
+4. Field-level error messages are shown if validation fails.
+5. On success, the file appears in the file list with its record count.
 
 **Managing files**
 
 | Action | Effect |
 |---|---|
-| **View / Edit** | Opens the AG Grid for that file. Admins see all records (not filtered by owner) and the Owner column is editable. |
-| **Download** | Downloads the current state as an Excel workbook (Data + Schema sheets) that can be re-uploaded to any ConduVet instance. |
-| **Remove** | Soft-deletes the file (data is retained in the database, the file is removed from the active list). |
+| **View / Edit** | Opens the AG Grid for that file. Admins see all records (not filtered by owner) with the Owner and Vetter columns editable. |
+| **Download** | Downloads the current state as an Excel workbook (Data + Schema + Edit History sheets). |
+| **Remove** | Soft-deletes the file (data is retained in the database). |
 
 ### Reports Tab
 
 Select a file, then choose a report type:
 
-| Report | Description |
-|---|---|
-| By User | Records updated or added, grouped by userid with counts. |
-| By Record | Which users touched each record and when. |
-| Untouched Records | Records still at `Unvetted` status, grouped by userid. |
+| Report | Columns | Description |
+|---|---|---|
+| By User | Owner, Total, New, Updated, Old, Delete | Record counts per owner, broken down by status |
+| By Record | ID, Owner, Status, Last Updated, Field Changes | Per-record details with edit count |
 
 Each report renders as a table on screen and can be downloaded as Excel.
 
 ### Configuration Tab
 
-Upload a new `config.yaml` to update the title, admin credentials, or backup directory. Optionally upload a new `users.csv` to replace the user list.
+Upload a new `config.yaml` to update the title, admin credentials, backup directory, or auto-logout timeout. Optionally upload a new `users.csv` to replace the user list.
+
+**Reset All Data**
+
+The Configuration tab includes a **Reset All Data** button (in the Danger Zone section). This permanently deletes all datasets, user accounts, and the current configuration, returning the app to its initial unconfigured state. A confirmation step is required. After a successful reset, you are redirected to the setup page.
 
 ---
 
@@ -314,7 +333,7 @@ Upload a new `config.yaml` to update the title, admin credentials, or backup dir
 
 ### Logging In
 
-Go to the app's root URL. Enter your **User ID** and **Password** on the login page and click **Login**.
+Go to the app's root URL. Enter your **User ID** and **Password** and click **Login**.
 
 ### Choosing a File
 
@@ -325,21 +344,31 @@ After login you will see one button for each active data file. Click a button to
 The data entry page shows your assigned records in a spreadsheet grid.
 
 - **Navigate** with Tab, arrow keys, or by clicking a cell.
-- **Edit** by double-clicking or pressing Enter on a focused cell.
-- **Cell types** — text inputs, number fields, dropdowns (single-select), and checkbox popups (multi-select) are configured automatically from the schema.
+- **Edit** by clicking or typing in a focused cell.
+- **Boolean fields** appear as checkboxes — click to toggle.
 - **Red cells** indicate a validation error. Hover over the cell for the error message.
 
-The **context panel** at the bottom of the screen shows:
+The **context panel** at the bottom shows:
 - **Left** — field description (Markdown) and a sample value.
-- **Right** — the edit history for that field: who changed it, when, and what the previous value was.
+- **Right** — the edit history for that field: who changed it, when, and the old → new value. Also shows lock status if the record is locked.
+
+### Vetting & Vetted-Lock
+
+- The **Vetted** checkbox (on records where you are the assigned vetter) lets you mark a record as approved.
+- Once **Vetted = true**, the record owner **cannot edit any fields** until you uncheck it. You (the vetter) retain full edit access regardless.
+- Record Status is editable by the owner only when the record is not vetted; you can always edit it.
+
+### Record Locking
+
+When you start editing a record it is automatically locked to prevent conflicting changes from other users. The lock is released when you submit, log out, or your session times out.
 
 ### Adding a Record
 
-Click **Add Record** to insert a new empty row. The row is owned by your user ID and has status `New`.
+Click **+ Add Record** to insert a new empty row. The row is owned by your user ID and has status `New`.
 
 ### Submitting
 
-Click **Submit** when you are done. Full validation runs before saving. If there are errors, the affected cells are highlighted and you must correct them before the submission is accepted. On success you are returned to the file selection screen.
+Click **Submit** at the top of the grid. Full validation runs before saving. Fix any highlighted errors and resubmit. On success you are returned to the file selection screen.
 
 ---
 
@@ -358,7 +387,7 @@ Set these in `docker-compose.yml` (under `backend.environment`) or as shell envi
 ## Automatic Backups
 
 - A backup job runs every **2 hours** for each active data file.
-- Each backup is a full Excel export (Data + Schema sheets).
+- Each backup is a full Excel export (Data + Schema + Edit History sheets).
 - A maximum of **24 backups per file** are kept. The oldest is deleted when the 25th is written.
 - Backup filenames: `{display_name}_{YYYYMMDD_HHMM}.xlsx`
 - The backup directory is set via `backup_dir` in `config.yaml` and created automatically if it does not exist.
@@ -368,12 +397,21 @@ Set these in `docker-compose.yml` (under `backend.environment`) or as shell envi
 ## Authentication & Security
 
 - All routes except `/admin/setup`, `/admin/login`, and `/login` require a valid JWT.
-- User tokens expire after **1 hour**; admin tokens after **2 hours**.
+- User and admin tokens expire after **8 hours**.
 - Passwords are stored as **bcrypt hashes**; plaintext is never persisted.
-- The authentication logic is behind a pluggable `AuthProvider` interface (`backend/auth/ldap_stub.py`). The default implementation checks bcrypt hashes against the database. To switch to LDAP or SAML, implement `LDAPAuthProvider(AuthProvider)` and replace `auth_provider` — no other code needs to change.
+- The authentication logic is behind a pluggable `AuthProvider` interface (`backend/auth/ldap_stub.py`). The default implementation checks bcrypt hashes against the database. To switch to LDAP or SAML, implement the provider interface — no other code needs to change.
+- **Rate limiting** is applied to login endpoints via slowapi to prevent brute-force attacks.
 
 > **Production checklist**
 > - Set `SECRET_KEY` to a long random string.
 > - Restrict `CORS_ORIGINS` to your actual domain.
 > - Change the default PostgreSQL password in `docker-compose.yml`.
 > - Place the app behind HTTPS (reverse proxy such as nginx or Caddy).
+
+---
+
+## License & Copyright
+
+(c) 2026 Sinan Salman, Ph.D.
+
+ConduVet is released under the GPLv3 license, which is available at [GNU](https://www.gnu.org/licenses/gpl-3.0.html).

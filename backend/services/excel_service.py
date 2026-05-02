@@ -95,17 +95,44 @@ def _datetime_to_display(value: Any) -> Optional[str]:
 # parse_excel
 # ---------------------------------------------------------------------------
 
-def parse_excel(file_bytes: bytes) -> tuple[list[dict], list[dict]]:
+def _parse_history_datetime(raw) -> Optional[datetime]:
+    """Try to parse a cell value as a datetime for the Edit History sheet."""
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, date):
+        return datetime(raw.year, raw.month, raw.day)
+    s = str(raw).strip()
+    for fmt in (
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def parse_excel(file_bytes: bytes) -> tuple[list[dict], list[dict], list[dict]]:
     """
     Validate and parse an uploaded Excel file.
 
     Returns:
-        (data_rows, schema_list)
+        (data_rows, schema_list, history_rows)
 
-        data_rows  : list of dicts  — one dict per data row, keys = column headers
-        schema_list: list of dicts  — one dict per schema field with keys:
-                        field_name, description, data_type, sample_data,
-                        depends_on, accept_null, field_order
+        data_rows   : list of dicts — one dict per data row, keys = column headers
+        schema_list : list of dicts — one dict per schema field with keys:
+                         field_name, description, data_type, sample_data,
+                         depends_on, accept_null, field_order
+        history_rows: list of dicts — one dict per history entry from the optional
+                         "Edit History" sheet.  Empty list if the sheet is absent.
+                         Keys: record_id (int|None), field_name, old_value,
+                               new_value, changed_by, changed_at (datetime|None)
 
     Raises:
         ValueError with a descriptive message on invalid format.
@@ -272,7 +299,69 @@ def parse_excel(file_bytes: bytes) -> tuple[list[dict], list[dict]]:
                 row_dict[col_name] = None
         data_rows.append(row_dict)
 
-    return data_rows, schema_list
+    # ---- Parse Edit History sheet (optional) ---------------------------------
+    history_rows: list[dict] = []
+    if "edit history" in sheet_names_lower:
+        ws_hist = wb[sheet_names_lower["edit history"]]
+        hist_rows_raw = list(ws_hist.iter_rows(values_only=False))
+
+        # Locate header row
+        hist_header_map: dict[str, int] = {}
+        hist_header_idx = None
+        for row_idx, row in enumerate(hist_rows_raw):
+            non_empty = [c for c in row if _cell_value(c) is not None]
+            if non_empty:
+                hist_header_idx = row_idx
+                for col_idx, cell in enumerate(row):
+                    val = _cell_value(cell)
+                    if val is not None:
+                        hist_header_map[str(val).lower().strip()] = col_idx
+                break
+
+        # Required column names (case-insensitive)
+        _H_RECORD_ID  = "record id"
+        _H_FIELD_NAME = "field name"
+        _H_OLD_VALUE  = "old value"
+        _H_NEW_VALUE  = "new value"
+        _H_CHANGED_BY = "changed by"
+        _H_CHANGED_AT = "changed at"
+
+        if hist_header_idx is not None and all(
+            h in hist_header_map
+            for h in (_H_FIELD_NAME, _H_OLD_VALUE, _H_NEW_VALUE, _H_CHANGED_BY, _H_CHANGED_AT)
+        ):
+            for row_idx in range(hist_header_idx + 1, len(hist_rows_raw)):
+                row = hist_rows_raw[row_idx]
+                if all(_cell_value(c) is None for c in row):
+                    continue
+
+                def _hcell(key: str):
+                    col = hist_header_map.get(key)
+                    if col is None or col >= len(row):
+                        return None
+                    return _cell_value(row[col])
+
+                # record_id may be NULL for deleted-record events
+                raw_rid = _hcell(_H_RECORD_ID)
+                try:
+                    record_id = int(raw_rid) if raw_rid is not None else None
+                except (ValueError, TypeError):
+                    record_id = None
+
+                field_name = _hcell(_H_FIELD_NAME)
+                if not field_name:
+                    continue  # skip rows without a field name
+
+                history_rows.append({
+                    "record_id":  record_id,
+                    "field_name": str(field_name),
+                    "old_value":  str(_hcell(_H_OLD_VALUE)) if _hcell(_H_OLD_VALUE) is not None else None,
+                    "new_value":  str(_hcell(_H_NEW_VALUE)) if _hcell(_H_NEW_VALUE) is not None else None,
+                    "changed_by": str(_hcell(_H_CHANGED_BY)) if _hcell(_H_CHANGED_BY) is not None else "imported",
+                    "changed_at": _parse_history_datetime(_hcell(_H_CHANGED_AT)),
+                })
+
+    return data_rows, schema_list, history_rows
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +516,17 @@ def export_excel(file_id: int, db) -> bytes:
         )
 
     for row_idx, history in enumerate(history_records, start=2):
-        ws_history.cell(row=row_idx, column=1, value=history.record_id)
+        # For _ROW_DELETED events the record has been removed, so record_id is NULL.
+        # The original record ID was stored in old_value at deletion time.
+        display_record_id = history.record_id
+        if display_record_id is None and history.field_name == "_ROW_DELETED":
+            # Recover the original record ID from old_value if possible
+            try:
+                display_record_id = int(history.old_value) if history.old_value else None
+            except (ValueError, TypeError):
+                display_record_id = None
+
+        ws_history.cell(row=row_idx, column=1, value=display_record_id)
         ws_history.cell(row=row_idx, column=2, value=history.field_name)
         ws_history.cell(row=row_idx, column=3, value=history.old_value)
         ws_history.cell(row=row_idx, column=4, value=history.new_value)

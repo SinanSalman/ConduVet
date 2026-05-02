@@ -10,6 +10,8 @@ import {
   updateAdminConfigUsers,
   setAppTitle,
   clearAdminToken,
+  resetAllData,
+  clearAllLocalStorage,
 } from '../api'
 import ReportViewer from '../components/ReportViewer'
 import { formatDate } from '../utils/schemaHelpers.jsx'
@@ -295,7 +297,6 @@ function ReportsTab() {
   const REPORT_TYPES = [
     { key: 'by-user', label: 'By User' },
     { key: 'by-record', label: 'By Record' },
-    { key: 'untouched', label: 'Untouched Records' },
   ]
 
   return (
@@ -383,7 +384,7 @@ function StatusBanner({ msg, onDismiss }) {
 }
 
 // ── Configuration Tab ──────────────────────────────────────────────────────────
-function ConfigurationTab() {
+function ConfigurationTab({ navigate }) {
   const [config, setConfig] = useState(null)
   const [configLoading, setConfigLoading] = useState(true)
 
@@ -397,6 +398,10 @@ function ConfigurationTab() {
   const [usersSaving, setUsersSaving] = useState(false)
   const [usersMsg, setUsersMsg]       = useState(null)
   const [usersKey, setUsersKey]       = useState(0)
+
+  // Reset state
+  const [resetPhase, setResetPhase]   = useState('idle')  // 'idle' | 'confirm' | 'busy'
+  const [resetError, setResetError]   = useState(null)
 
   function loadConfig() {
     setConfigLoading(true)
@@ -466,6 +471,25 @@ function ConfigurationTab() {
       })
     } finally {
       setUsersSaving(false)
+    }
+  }
+
+  // ── Reset handler ─────────────────────────────────────────────────────────
+  async function handleReset() {
+    setResetPhase('busy')
+    setResetError(null)
+    try {
+      await resetAllData()
+      clearAllLocalStorage()
+      navigate('/admin/setup')
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      setResetError(
+        typeof detail === 'string'
+          ? detail
+          : 'Reset failed. Please try again or restart the server.'
+      )
+      setResetPhase('idle')
     }
   }
 
@@ -577,6 +601,68 @@ function ConfigurationTab() {
         </form>
       </div>
 
+      {/* ── Danger zone ────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-red-200 p-5">
+        <h3 className="font-semibold text-red-700 mb-1">Danger Zone</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Permanently removes all datasets, records, user accounts, and the
+          configuration file. The application will return to the initial setup
+          screen. <strong>This cannot be undone.</strong>
+        </p>
+
+        {resetError && (
+          <div className="mb-3 bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 text-sm flex items-start justify-between gap-2">
+            <span>{resetError}</span>
+            <button
+              onClick={() => setResetError(null)}
+              className="shrink-0 text-red-400 hover:text-red-600 font-bold leading-none"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {resetPhase === 'idle' && (
+          <button
+            onClick={() => setResetPhase('confirm')}
+            className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            Reset All Data
+          </button>
+        )}
+
+        {resetPhase === 'confirm' && (
+          <div className="space-y-3">
+            <div className="bg-red-50 border border-red-300 rounded-lg p-3 text-sm text-red-800">
+              <p className="font-semibold mb-1">Are you absolutely sure?</p>
+              <p>
+                Every dataset, record, edit history, user account, and configuration
+                entry will be permanently deleted. You will need to run the setup
+                wizard again before anyone can log in.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleReset}
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                Yes, delete everything
+              </button>
+              <button
+                onClick={() => { setResetPhase('idle'); setResetError(null) }}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {resetPhase === 'busy' && (
+          <p className="text-sm text-red-600 font-medium">Resetting… please wait.</p>
+        )}
+      </div>
+
     </div>
   )
 }
@@ -628,7 +714,7 @@ export default function AdminDashboard() {
       <div className="max-w-5xl mx-auto px-6 py-6">
         {activeTab === 'Files' && <FilesTab onEditFile={handleEditFile} />}
         {activeTab === 'Reports' && <ReportsTab />}
-        {activeTab === 'Configuration' && <ConfigurationTab />}
+        {activeTab === 'Configuration' && <ConfigurationTab navigate={navigate} />}
       </div>
     </div>
   )

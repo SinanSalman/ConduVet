@@ -6,6 +6,7 @@ import csv
 import io
 import os
 import re
+import shutil
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -399,7 +400,7 @@ async def upload_file(
     filename = file.filename or "upload.xlsx"
 
     try:
-        data_rows, schema_list = parse_excel(file_bytes)
+        data_rows, schema_list, history_rows = parse_excel(file_bytes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -432,7 +433,15 @@ async def upload_file(
 
     # Persist data records
     now = datetime.now(timezone.utc)
-    record_count = 0
+    _SYSTEM = {"owner", "vetter", "record vetter", "last updated", "record status", "record id"}
+    schema_field_names = [
+        s["field_name"] for s in schema_list
+        if s["field_name"].lower() not in _SYSTEM
+    ]
+
+    records_list: list[DataRecord] = []   # references in the same order as data_rows
+    old_ids_list: list[Any] = []          # "Record ID" from the Excel row (may be None)
+
     for row in data_rows:
         # Extract system columns (case-insensitive key match)
         row_lower = {k.lower(): v for k, v in row.items()}
@@ -458,11 +467,6 @@ async def upload_file(
         # Build record_data from schema fields only, excluding system columns.
         # Owner, Vetter, Last Updated, Record Status are held in dedicated DB
         # columns and must not also live in the JSONB blob.
-        _SYSTEM = {"owner", "vetter", "record vetter", "last updated", "record status"}
-        schema_field_names = {
-            s["field_name"] for s in schema_list
-            if s["field_name"].lower() not in _SYSTEM
-        }
         record_data: dict[str, Any] = {}
         for field_name in schema_field_names:
             # Find matching column (case-insensitive)
@@ -473,19 +477,61 @@ async def upload_file(
                     break
             record_data[field_name] = matched_val
 
+        record = DataRecord(
+            file_id=data_file.id,
+            owner=owner,
+            vetter=vetter,
+            record_data=record_data,
+            record_status=record_status,
+            last_updated=last_updated,
+            created_at=now,
+        )
+        db.add(record)
+        records_list.append(record)
+        old_ids_list.append(row_lower.get("record id"))
+
+    # Flush to assign IDs to all new records without committing the transaction.
+    db.flush()
+
+    # Build a mapping from the Excel "Record ID" values → newly assigned DB IDs.
+    # This allows Edit History rows to be re-linked to the correct new records.
+    old_id_to_new_id: dict[int, int] = {}
+    for old_id_raw, record in zip(old_ids_list, records_list):
+        if old_id_raw is not None:
+            try:
+                old_id_to_new_id[int(old_id_raw)] = record.id
+            except (ValueError, TypeError):
+                pass
+
+    # Import Edit History rows from the workbook (if the sheet was present).
+    for h in history_rows:
+        old_rid = h.get("record_id")   # int or None
+        if old_rid is not None:
+            new_rid = old_id_to_new_id.get(old_rid)
+            if new_rid is None:
+                # History row references an ID not in the Data sheet.
+                # For deletion events the record truly no longer exists — keep
+                # the entry with record_id=NULL.  For other events, skip to
+                # avoid orphaned history with no matching record.
+                if h.get("field_name") != "_ROW_DELETED":
+                    continue
+                new_rid = None
+        else:
+            new_rid = None  # already NULL (e.g. previously deleted record)
+
         db.add(
-            DataRecord(
+            FieldHistory(
+                record_id=new_rid,
                 file_id=data_file.id,
-                owner=owner,
-                vetter=vetter,
-                record_data=record_data,
-                record_status=record_status,
-                last_updated=last_updated,
-                created_at=now,
+                field_name=h["field_name"],
+                old_value=h.get("old_value"),
+                new_value=h.get("new_value"),
+                changed_by=h.get("changed_by") or "imported",
+                changed_at=h.get("changed_at") or now,
             )
         )
-        record_count += 1
 
+    record_count = len(records_list)
     db.commit()
     return {
         "id": data_file.id,
@@ -510,6 +556,64 @@ def deactivate_file(
         raise HTTPException(status_code=404, detail="File not found")
     data_file.is_active = False
     db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# POST /reset — wipe all data and return to pre-setup state (admin auth)
+# ---------------------------------------------------------------------------
+
+@router.post("/reset")
+def reset_all_data(
+    _admin=Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete every piece of application data and return the instance to its
+    fresh state (as if the setup wizard had never been run).
+
+    Deleted in dependency order so FK constraints are satisfied:
+      1. FieldHistory          (references DataRecord via CASCADE — handled by ORM)
+      2. DataRecord            (references DataFile via CASCADE — handled by ORM)
+      3. SchemaDefinition      (references DataFile via CASCADE — handled by ORM)
+      4. DataFile
+      5. AppUser
+      6. AppConfig
+      7. On-disk: users CSV file (if stored path is still present)
+
+    After this call the app will redirect all requests to the setup wizard.
+    """
+    try:
+        # Fetch config before deleting it so we can clean up the users CSV path.
+        config = db.query(AppConfig).order_by(AppConfig.id.desc()).first()
+        users_file_path = config.users_file_path if config else None
+
+        # Delete in strict dependency order so FK constraints are never violated.
+        # Bulk deletes (synchronize_session=False) bypass ORM cascades, so each
+        # child table must be cleared before its parent.
+        db.query(FieldHistory).delete(synchronize_session=False)
+        db.query(SchemaDefinition).delete(synchronize_session=False)
+        db.query(DataRecord).delete(synchronize_session=False)
+        db.query(DataFile).delete(synchronize_session=False)
+        db.query(AppUser).delete(synchronize_session=False)
+        db.query(AppConfig).delete(synchronize_session=False)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Reset failed — the database could not be cleared. Please try again.",
+        )
+
+    # Best-effort: remove the on-disk users CSV.  Not fatal if it is missing.
+    if users_file_path:
+        try:
+            if os.path.isfile(users_file_path):
+                os.remove(users_file_path)
+        except OSError:
+            pass
+
     return {"ok": True}
 
 
@@ -628,7 +732,19 @@ def batch_update_records(
 
         record.record_data = new_data
         if "record_status" in update:
-            record.record_status = update["record_status"]
+            old_status = record.record_status
+            new_status = update["record_status"]
+            if new_status != old_status:
+                db.add(FieldHistory(
+                    record_id=record.id,
+                    file_id=record.file_id,
+                    field_name="Record Status",
+                    old_value=old_status,
+                    new_value=new_status,
+                    changed_by=changed_by,
+                    changed_at=now,
+                ))
+            record.record_status = new_status
         if "owner" in update:
             record.owner = str(update["owner"]).upper()
         # Handle both "vetter" and "record vetter" field names
@@ -708,17 +824,19 @@ def _get_by_user_data(file_id: int, db: Session) -> list[dict]:
         uid = r.owner
         if uid not in groups:
             groups[uid] = {"owner": uid, "total": 0, "new": 0, "updated": 0,
-                           "unvetted": 0, "archived": 0}
+                           "old": 0, "unvetted": 0, "delete": 0}
         groups[uid]["total"] += 1
         status_lower = (r.record_status or "").lower()
         if status_lower == "new":
             groups[uid]["new"] += 1
         elif status_lower == "updated":
             groups[uid]["updated"] += 1
+        elif status_lower == "old":
+            groups[uid]["old"] += 1
         elif status_lower == "unvetted":
             groups[uid]["unvetted"] += 1
-        elif status_lower == "archived":
-            groups[uid]["archived"] += 1
+        elif status_lower == "delete":
+            groups[uid]["delete"] += 1
     return list(groups.values())
 
 
@@ -742,27 +860,12 @@ def _get_by_record_data(file_id: int, db: Session) -> list[dict]:
                 "id": r.id,
                 "owner": r.owner,
                 "record_status": r.record_status,
-                "last_updated": r.last_updated.isoformat() if r.last_updated else None,
+                "last_updated": r.last_updated.strftime("%d-%m-%y %H:%M:%S") if r.last_updated else None,
                 "field_changes": history_count,
             }
         )
     return result
 
-
-def _get_untouched_data(file_id: int, db: Session) -> list[dict]:
-    """Unvetted records grouped by userid."""
-    records = (
-        db.query(DataRecord)
-        .filter(
-            DataRecord.file_id == file_id,
-            DataRecord.record_status == "Unvetted",
-        )
-        .all()
-    )
-    groups: dict[str, int] = {}
-    for r in records:
-        groups[r.owner] = groups.get(r.owner, 0) + 1
-    return [{"owner": uid, "unvetted_count": cnt} for uid, cnt in groups.items()]
 
 
 def _build_report_xlsx(headers: list[str], rows: list[list]) -> bytes:
@@ -805,7 +908,13 @@ def report_by_user(
     _admin=Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return _get_by_user_data(file_id, db)
+    data = _get_by_user_data(file_id, db)
+    columns = ["Owner", "Total", "New", "Updated", "Old", "Unvetted", "Delete"]
+    rows = [
+        [d["owner"], d["total"], d["new"], d["updated"], d["old"], d["unvetted"], d["delete"]]
+        for d in data
+    ]
+    return {"columns": columns, "rows": rows}
 
 
 @router.get("/reports/{file_id}/by-user/download")
@@ -817,7 +926,7 @@ def report_by_user_download(
     data = _get_by_user_data(file_id, db)
     headers = ["Owner", "Total", "New", "Updated", "Old", "Delete"]
     rows = [
-        [d["owner"], d["total"], d["new"], d["updated"], d["unvetted"], d["archived"]]
+        [d["owner"], d["total"], d["new"], d["updated"], d["old"], d["unvetted"], d["delete"]]
         for d in data
     ]
     xlsx_bytes = _build_report_xlsx(headers, rows)
@@ -838,7 +947,13 @@ def report_by_record(
     _admin=Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return _get_by_record_data(file_id, db)
+    data = _get_by_record_data(file_id, db)
+    columns = ["ID", "Owner", "Record Status", "Last Updated", "Field Changes"]
+    rows = [
+        [d["id"], d["owner"], d["record_status"], d["last_updated"], d["field_changes"]]
+        for d in data
+    ]
+    return {"columns": columns, "rows": rows}
 
 
 @router.get("/reports/{file_id}/by-record/download")
@@ -861,31 +976,3 @@ def report_by_record_download(
     )
 
 
-# ---------------------------------------------------------------------------
-# GET /reports/{file_id}/untouched — admin auth
-# ---------------------------------------------------------------------------
-
-@router.get("/reports/{file_id}/untouched")
-def report_untouched(
-    file_id: int,
-    _admin=Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    return _get_untouched_data(file_id, db)
-
-
-@router.get("/reports/{file_id}/untouched/download")
-def report_untouched_download(
-    file_id: int,
-    _admin=Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    data = _get_untouched_data(file_id, db)
-    headers = ["Owner", "Unvetted Count"]
-    rows = [[d["owner"], d["unvetted_count"]] for d in data]
-    xlsx_bytes = _build_report_xlsx(headers, rows)
-    return StreamingResponse(
-        io.BytesIO(xlsx_bytes),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="report_untouched.xlsx"'},
-    )

@@ -10,12 +10,15 @@ Welcome to ConduVet! This manual will guide you through all the features of the 
 2. [Login & Dashboard](#login--dashboard)
 3. [Data Entry Interface](#data-entry-interface)
 4. [Editing Records](#editing-records)
-5. [Record Locking](#record-locking)
-6. [Validation & Error Messages](#validation--error-messages)
-7. [Vetting Workflow](#vetting-workflow)
-8. [Submitting Changes](#submitting-changes)
-9. [Session & Auto-Logout](#session--auto-logout)
-10. [Tips & Best Practices](#tips--best-practices)
+5. [Vetting Workflow](#vetting-workflow)
+6. [Record Status](#record-status)
+7. [Record Locking](#record-locking)
+8. [Validation & Error Messages](#validation--error-messages)
+9. [Submitting Changes](#submitting-changes)
+10. [Session & Auto-Logout](#session--auto-logout)
+11. [Tips & Best Practices](#tips--best-practices)
+12. [Frequently Asked Questions](#frequently-asked-questions)
+13. [License & Copyright](#license--copyright)
 
 ---
 
@@ -60,15 +63,15 @@ After logging in, you'll see a list of available datasets. Each dataset is displ
 
 The data entry interface is divided into three main sections:
 
-1. **Top Header Bar** - Shows dataset name, back button, and action buttons
-2. **Data Grid** - The main table showing records
-3. **Context Panel** - Lower third showing field help and edit history
+1. **Top Header Bar** — Shows dataset name, back button, and action buttons
+2. **Data Grid** — The main table showing records
+3. **Context Panel** — Lower section showing field help and edit history
 
 ### Header Bar
 
-- **Dataset Name**: Shows the name of the dataset you're working with (e.g., "Research Projects")
+- **Dataset Name**: Shows the name of the dataset you're working with
 - **Back Button**: Returns to the dashboard
-- **Add Record Button**: Creates a new empty record (users only)
+- **+ Add Record Button**: Creates a new empty record
 - **Submit Button**: Saves all changes to the database
 
 ### Data Grid
@@ -84,27 +87,31 @@ The data grid displays your records as rows and fields as columns.
 **Cell Types:**
 - **Text Input**: Type freely within character limits
 - **Number Input**: Enter numbers within the specified range
-- **Date Picker**: Click to open calendar picker (accepts flexible date format)
-- **Dropdown**: Click to open list of predefined options
-- **Checkbox/Multiple**: Select one or more values
-- **Hyperlinked URLs**: Click blue underlined URLs to open in a new tab
+- **Date Picker**: Click to open a calendar picker (accepts flexible date format)
+- **Dropdown (List)**: Click to select from a predefined list of options
+- **Checkbox (Boolean)**: Click to toggle true/false — used for the Vetted field
+- **Multi-value (Multiple)**: Type comma-separated values
+- **Hyperlinked URLs**: URLs in cells are automatically detected and made clickable
 
-### Context Panel (Lower Third)
+### Understanding Cell Colors
 
-The context panel is split into two sections:
+- **White background**: Normal, editable cell
+- **Light blue background**: Cell has been changed and is pending submit
+- **Light red background**: Cell contains a validation error
+- **Gray background**: Cell cannot be edited (locked, vetted-locked, or permission restriction)
 
-**Left Column - Field Help:**
-- **Field Name & Type**: The name and data type of the focused cell
-- **Description**: Help text explaining what this field is for
+### Context Panel (Lower Section)
+
+The context panel is split into two columns:
+
+**Left Column — Field Help:**
+- **Description**: Help text explaining what this field is for (formatted text)
 - **Sample Data**: An example of valid input
 
-**Right Column - Edit History:**
-- **Field Changes**: Shows all previous values entered for this field
-- **Change Details**: 
-  - Who made the change (user name)
-  - When it was changed (date and time)
-  - What changed (Old Value → New Value)
-- **Lock Status**: Shows if the record is currently locked (who locked it and when)
+**Right Column — Edit History:**
+- **Field Changes**: All previous values entered for the currently focused field
+- **Change Details**: Who made the change (user name), when, and what changed (Old Value → New Value)
+- **Lock Status**: If the record is currently locked, the top of this panel shows who locked it and when
 
 ---
 
@@ -113,31 +120,102 @@ The context panel is split into two sections:
 ### Creating a New Record
 
 1. Click the **+ Add Record** button
-2. A new empty row will be added to the grid
+2. A new empty row is added to the grid
 3. The new record will be:
-   - Assigned to you as the owner
-   - Assigned to the vetter with the fewest records (for vetting)
-   - Set to "New" status
-   - Ready for editing
+   - Owned by you
+   - Assigned a vetter automatically
+   - Set to **New** status
+   - **Vetted** checkbox set to unchecked (false)
 
 ### Editing Existing Records
 
-1. Click on any cell to focus it
-2. Start typing to edit the value
-3. Press **Tab** or **Enter** to move to the next cell
-4. The cell will be marked as changed (background color changes)
+1. Click on any editable cell and start typing (or click a checkbox to toggle it)
+2. Press **Tab** or **Enter** to move to the next cell
+3. Changed cells have a blue tint to indicate pending changes
 
-**Important**: You can only edit records where:
-- **Owner is you** (you created the record), OR
-- **Owner is "ALL"** (shared records), AND
-- **The record is not locked** by another user
+**You can only edit records where:**
+- You are the **owner** of the record (you created it), OR
+- The record's **Owner** is `ALL` (shared records)
 
-### Understanding Cell Colors
+**You cannot edit:**
+- Records locked by another user
+- Fields restricted by your role (see Vetting Workflow)
+- Any field when the record is **vetted** and you are the owner
 
-- **White background**: Normal, unedited cell
-- **Light blue background**: Cell is currently being edited or has been changed
-- **Light red background**: Cell contains an error (fails validation)
-- **Gray background**: Cell cannot be edited (locked by another user or locked field)
+### Deleting a Record
+
+Only the **assigned vetter** of a record can delete it. A confirmation prompt is shown before deletion. Deletions are recorded in the edit history.
+
+---
+
+## Vetting Workflow
+
+### Key Roles
+
+| Role | What they can do |
+|---|---|
+| **Record Owner** | Create and edit their own records; change Record Status when not vetted |
+| **Record Vetter** | Edit all fields; check/uncheck Vetted; delete records assigned to them |
+| **Admin** | Full access to all records and fields |
+
+### The Vetted Checkbox
+
+The **Vetted** column is a checkbox that the assigned vetter uses to mark a record as approved.
+
+- **Only the assigned vetter** can check or uncheck this box
+- The owner sees this as read-only
+
+### Vetted-Lock (Owner Restriction)
+
+When the vetter checks **Vetted = true**, the record is locked for the **owner**:
+
+- The owner **cannot edit any fields** while the record is vetted
+- All cells appear **grayed out** for the owner
+- The vetter retains full edit access
+- The admin retains full edit access
+
+**To allow the owner to edit again**, the vetter simply unchecks the **Vetted** checkbox.
+
+### If You Are the Vetter
+
+You can:
+- **Check or uncheck Vetted** to approve or re-open a record
+- **Edit all fields**, including fields the owner cannot edit while vetted
+- **Edit Record Status** at any time
+- **Delete records** that are assigned to you
+
+### If You Are the Record Owner
+
+You can:
+- **Create and edit your records** — as long as they are not vetted
+- **See the Vetted status** (read-only) to know if your record has been approved
+- **Edit Record Status** — only when the record is not vetted (Vetted = false)
+- Fix and resubmit records after a vetter unmarks them
+
+You **cannot**:
+- Change the Vetted checkbox
+- Edit any field when the record is vetted
+- Delete records (only the vetter can do this)
+
+---
+
+## Record Status
+
+The **Record Status** column reflects the lifecycle state of each record:
+
+| Status | Meaning |
+|---|---|
+| `New` | Newly created record |
+| `Updated` | Record has been edited since upload |
+| `Old` | Existing record from the original dataset, not yet changed |
+| `Delete` | Marked for deletion |
+
+**Who can change Record Status:**
+- **Owner**: Can edit Record Status only when the record is **not vetted** (Vetted = false)
+- **Vetter**: Can always edit Record Status, even when the record is vetted
+- **Admin**: Can always edit Record Status
+
+Record Status changes are tracked in the **edit history**, visible in the context panel.
 
 ---
 
@@ -145,92 +223,58 @@ The context panel is split into two sections:
 
 ### What is Record Locking?
 
-When you start editing a record, it becomes locked to prevent other users from making conflicting changes. The lock is automatically released when you:
+When you start editing a record, it is automatically locked to prevent conflicting changes from other users. The lock is released when you:
 - Submit your changes
 - Log out
 - Session times out due to inactivity
 
 ### Lock Status Indicator
 
-- **Lock Icon (🔒)**: Appears on locked records
-- **Lock Info Panel**: Shows in the right column of the context panel:
-  - Who locked the record (user ID)
-  - When it was locked (date and time)
+When a record is locked by another user:
+- The entire row appears **grayed out**
+- The **right column of the context panel** shows who locked the record and when
+
+### When a Record is Locked by You
+
+When you are actively editing a record, it is locked from others but fully editable by you. Submit your changes to release the lock.
 
 ### When a Record is Locked by Another User
 
-If another user has locked a record:
-- The record row appears grayed out
 - You cannot edit any fields in that record
 - Wait for the other user to submit or log out
-- Locks are automatically released, so you won't wait forever
+- Locks are automatically released, so you won't wait indefinitely
 
 ---
 
 ## Validation & Error Messages
 
-### Understanding Validation
+### What is Validated
 
-As you edit cells, the app checks:
-- **Type**: Is the value the correct type? (number, date, text, etc.)
+As you edit cells and when you submit, the app checks:
+- **Type**: Is the value the correct type? (number, date, text, boolean, etc.)
 - **Range**: Is the number within the allowed range?
-- **Length**: Is the text not too long?
-- **Required**: Is the field required? (if "Depends on" rules apply)
+- **Length**: Is the text within the character limit?
+- **Required**: Is the field required? (including conditional `Depends on` rules)
 - **Options**: Is the value one of the allowed options? (for dropdowns)
 
 ### Error Indicators
 
-**Red Cell Background**: Indicates a validation error
-- Hover over the cell to see the error message
-- The error message explains what's wrong and how to fix it
+**Red cell background**: Hover over the cell to see the error message.
 
 **Examples:**
-- `"Age must be between 18 and 100 (got 150)"` - Number out of range
-- `"Email is required because Country is set to 'USA'"` - Conditional requirement
-- `"Maximum length is 50 characters (you have 75)"` - Text too long
+- `"must be a number"` — wrong type
+- `"must be between 0 and 100"` — number out of range
+- `"required"` — empty field that must be filled
+- `"required because [OtherField] is [value]"` — conditional requirement triggered
+- `"maximum length is 255 characters"` — text too long
 
 ### Fixing Errors
 
-1. Identify the red cell with the error
-2. Read the error message
-3. Correct the value according to the instructions
-4. The cell will turn back to white when the error is fixed
-5. You can then submit successfully
-
----
-
-## Vetting Workflow
-
-### Understanding the Vetting Process
-
-The vetting workflow allows designated users (vetters) to review and approve records.
-
-**Key Concepts:**
-- **Record Owner**: The person who created or entered the record
-- **Record Vetter**: The person assigned to review the record (assigned automatically or by admin)
-- **Vetting Status**: The approval status (e.g., "Unvetted", "Vetted", "Rejected")
-
-### If You Are a Vetter
-
-You can:
-- **Edit Vetting Status**: Change the record status to indicate review completion
-- **View Record Details**: See all fields and edit history
-- **Delete Records**: Remove records that are assigned to you (if needed)
-
-**You cannot:**
-- Edit fields in records you don't own (unless you're the owner or record is "ALL")
-- Change the vetting status of records not assigned to you
-
-### If You Are a Record Owner
-
-You can:
-- **Create and Edit Records**: Add new records and modify fields
-- **View Vetting Status**: See if your record has been reviewed
-- **Resubmit if Rejected**: Fix issues and resubmit for vetting
-
-**You cannot:**
-- Edit the vetting status field (only the assigned vetter can do this)
-- Delete your own records (only the assigned vetter can delete)
+1. Identify the red-highlighted cell
+2. Read the tooltip error message
+3. Correct the value
+4. The cell turns white when the error is resolved
+5. Submit successfully once all errors are cleared
 
 ---
 
@@ -238,30 +282,32 @@ You can:
 
 ### Before You Submit
 
-1. **Review Your Changes**: Scroll through the edited cells
-2. **Check for Errors**: Look for any red-highlighted cells
-3. **Check Edit History**: Click on fields to see what changed
-4. **Verify Status**: Ensure record status reflects your intent
+1. Check for any **red-highlighted cells** — these must be fixed before submitting
+2. Review changed cells (blue tint) to confirm your edits
+3. Check the **edit history** in the context panel to verify what changed
 
 ### Submitting
 
 1. Click the **Submit** button at the top of the grid
-2. The app will validate all your changes
+2. Full validation runs on all changed records
 3. If there are errors:
-   - Error cells will be highlighted in red
-   - Error messages will explain what's wrong
-   - Fix the errors and try again
+   - Affected cells are highlighted in red
+   - Error messages explain what to fix
+   - Correct the errors and click Submit again
 4. If validation passes:
-   - Changes are saved to the database
-   - Edit history is updated
+   - All changes are saved to the database
+   - Edit history is updated for every changed field (including Record Status)
    - Records are unlocked
    - You return to the dashboard
+
+### Vetted-Lock on Submit
+
+If you are a record **owner** and attempt to submit changes to a record that has been vetted (Vetted = true), the submission will be rejected. You will see a per-record error. Ask your vetter to unmark the record before making further edits.
 
 ### After Submit
 
 - Your changes are now visible to all users viewing the dataset
-- Other users can see what you changed (in edit history)
-- If you were a vetter, other users can see your vetting status update
+- The full edit history (with your name and timestamp) is visible in the context panel
 
 ---
 
@@ -269,10 +315,7 @@ You can:
 
 ### Session Timeout
 
-Your session automatically times out after a period of inactivity to protect your data.
-
-**Default timeout**: 30 minutes of no activity
-- This can be customized by your administrator
+Your session automatically times out after a period of inactivity to protect your data. The default timeout is **30 minutes** and can be configured by your administrator.
 
 ### Activity That Resets the Timeout
 
@@ -281,29 +324,20 @@ The timer resets whenever you:
 - Type in a cell
 - Move the mouse
 - Press any keyboard key
-- Use the navigation buttons
+- Scroll the page
 
 ### What Happens When You Time Out
 
 1. Your session automatically ends
-2. You are logged out
-3. You are redirected to the login page
-4. Any locks on your records are automatically released
-5. **Unsaved changes are lost** - this is why you should submit regularly
+2. You are logged out and redirected to the login page
+3. Any locks on your records are automatically released
+4. **Unsaved changes are lost** — submit regularly to avoid losing work
 
 ### Staying Logged In
 
-To avoid losing work:
-- **Submit frequently**: Save your changes every 5-10 minutes
+- **Submit frequently**: Save your changes every few minutes
 - **Stay active**: Keep interacting with the page while editing
-- **Avoid leaving open**: Don't walk away from the page without logging out
-
-### Manual Logout
-
-To log out before the timeout:
-1. Click the **Logout** button in the top-right corner
-2. Confirm the logout if prompted
-3. All your locks will be released
+- **Log out manually**: Use the Logout button if you need to step away
 
 ---
 
@@ -311,45 +345,49 @@ To log out before the timeout:
 
 ### General Tips
 
-1. **Save Regularly**: Click Submit frequently to save your work
-2. **Check Edit History**: Always verify what changed before submitting
-3. **Read Error Messages**: They tell you exactly what's wrong and how to fix it
-4. **Use Sample Data**: Check the context panel for examples of valid entries
-5. **Respect Locks**: If another user has a record locked, wait for them to submit
+1. **Submit regularly** — Click Submit every few minutes to save your work
+2. **Check the context panel** — The field description and sample data guide you on what to enter
+3. **Read error messages** — They explain exactly what is wrong and how to fix it
+4. **Respect locks** — If another user has a record locked, wait for them to submit or time out
+5. **Check edit history** — Before submitting, review what you changed in the right column of the context panel
 
 ### Working with Dates
 
 - **Format**: Enter dates as DD/MM/YYYY (e.g., 15/03/2024)
-- **Flexible Input**: Single digits work (e.g., 1/3/2024 will become 01/03/2024)
-- **Date Picker**: Click the cell to use the calendar picker for easier entry
+- **Flexible input**: Single digits work (e.g., 1/3/2024 becomes 01/03/2024 automatically)
 
 ### Working with URLs
 
-URLs are automatically detected and made clickable:
-- Click blue underlined URLs to open them in a new tab
-- URLs work in both the grid cells and the edit history panel
-- Supported formats: http://, https://, ftp://, and www. URLs
+URLs are automatically detected and made clickable throughout the app:
+- Supported formats: `http://`, `https://`, `ftp://`, and `www.` URLs
+- Click blue underlined links to open them in a new tab
+- URLs are also clickable in the edit history panel
 
-### Working with Multiple-Select Fields
+### Working with Boolean (Checkbox) Fields
+
+- Click the checkbox to toggle between checked (true) and unchecked (false)
+- A grayed-out checkbox means you do not have permission to edit it
+
+### Working with Multi-Value Fields
 
 For fields that accept multiple values:
 1. Click the cell
-2. Enter values separated by commas (e.g., "value1, value2, value3")
-3. Click outside or press Tab to confirm
+2. Type values separated by commas (e.g., `G,BS,HEI`)
+3. Press Tab or click outside to confirm
 
 ### Avoiding Common Mistakes
 
 ❌ **Don't:**
-- Leave the page without submitting - your changes will be lost on timeout
-- Edit a locked record (you can't - wait for the lock to be released)
-- Enter numbers with commas or currency symbols (e.g., use 1000, not "1,000")
-- Use future dates for historical data
+- Leave the page without submitting — unsaved changes are lost on timeout
+- Try to edit a vetted record if you are the owner — it won't work
+- Enter numbers with commas or currency symbols (use `1000`, not `1,000`)
+- Edit a record locked by another user — wait for it to be released
 
 ✅ **Do:**
-- Submit your work regularly (every 5-10 minutes)
-- Use the date picker for date entry when possible
-- Check the error messages - they guide you to the fix
-- Wait a few moments for locks to auto-release if someone times out
+- Submit your work regularly
+- Use the context panel to understand what each field expects
+- Check error messages — they point you directly to the problem
+- Ask the vetter to uncheck Vetted before making further edits to an approved record
 
 ### Keyboard Shortcuts
 
@@ -357,67 +395,45 @@ For fields that accept multiple values:
 |--------|----------|
 | Move to next cell | Tab |
 | Move to previous cell | Shift + Tab |
-| Move up/down | Arrow Keys (↑ ↓) |
-| Move left/right | Arrow Keys (← →) |
-| Edit focused cell | Start typing |
+| Move between cells | Arrow Keys |
+| Start editing a cell | Start typing |
+| Confirm edit and move | Enter or Tab |
 | Submit changes | Click Submit button |
 | Logout | Click Logout button |
 
 ---
 
-## Getting Help
-
-### Error Messages
-
-If you see an error message:
-1. Read the message carefully - it explains what's wrong
-2. Follow the guidance provided
-3. Correct the value and try again
-
-**Common errors:**
-- `"required"` - You must fill in this field
-- `"must be a number"` - This field only accepts numbers
-- `"between X and Y"` - The number is out of range
-- `"valid date"` - The date format is incorrect
-- `"already exists"` - This value is not allowed
-
-### Contacting Support
-
-If you encounter a problem:
-1. Note the error message and what you were doing
-2. Note any record IDs involved
-3. Contact your administrator with:
-   - What you were trying to do
-   - What error you received
-   - When it happened
-
----
-
 ## Frequently Asked Questions
 
-**Q: Can I delete my own records?**  
-A: No, only the assigned vetter can delete records. This protects data integrity.
+**Q: Can I delete my own records?**
+No. Only the assigned vetter can delete records. This protects data integrity.
 
-**Q: What if my session times out while I'm editing?**  
-A: You'll be logged out. Unsaved changes will be lost. To avoid this, submit your changes regularly.
+**Q: Why are all my cells grayed out?**
+The assigned vetter has marked your record as vetted (Vetted = true). You cannot edit any fields until the vetter unchecks that box. Contact your vetter if you need to make changes.
 
-**Q: Can I edit a record that another user locked?**  
-A: No, locked records are read-only. Wait for the lock to be released (automatically after timeout or when the user submits).
+**Q: Can I edit Record Status when my record is vetted?**
+No. The owner cannot edit Record Status when the record is vetted. The vetter and admin can always edit it.
 
-**Q: How do I know who locked a record?**  
-A: Look at the lock status in the right panel of the context panel. It shows the user ID who locked it and when.
+**Q: What if my session times out while I'm editing?**
+You'll be logged out and unsaved changes will be lost. Submit your changes frequently to avoid this.
 
-**Q: Can I undo a change after submitting?**  
-A: No, but you can see what changed in the edit history. Only the assigned vetter or administrator can modify submitted records.
+**Q: Can I edit a record that another user locked?**
+No. Locked records are read-only for other users. The lock is released automatically when the user submits, logs out, or times out.
 
-**Q: What if I make a mistake?**  
-A: Don't panic! You can re-edit the record and submit the corrected version. The edit history will show all changes, so there's a complete audit trail.
+**Q: How do I know who locked a record?**
+Click on any cell in the locked row — the right column of the context panel shows who locked it and when.
 
-**Q: Are my changes saved automatically?**  
-A: No, you must click the Submit button to save. Clicking away or timing out will lose unsaved changes.
+**Q: Can I undo a change after submitting?**
+No direct undo. However, you can re-edit the record and submit a corrected version. The full edit history is always preserved, so every change is traceable.
 
-**Q: Can I work offline?**  
-A: No, ConduVet requires an internet connection and an active session to work.
+**Q: Are my changes saved automatically?**
+No. You must click the **Submit** button to save. Clicking away, navigating back, or timing out will lose unsaved changes.
+
+**Q: What does the edit history in the context panel show?**
+It shows every previous value for the currently focused field — who changed it, when, and what it changed from and to. Record Status changes are also included in the history.
+
+**Q: Can I work offline?**
+No. ConduVet requires an active internet connection and a valid session.
 
 ---
 
@@ -425,16 +441,24 @@ A: No, ConduVet requires an internet connection and an active session to work.
 
 ConduVet is designed to make collaborative data entry and vetting efficient and transparent:
 
-- **Edit your records** easily with guided validation
-- **See all changes** in the detailed edit history
+- **Edit your records** easily with guided validation and inline help
+- **See all changes** in the detailed edit history — including Record Status changes
 - **Avoid conflicts** with automatic record locking
-- **Meet deadlines** with configurable session timeouts
-- **Stay organized** with clear vetting workflow
+- **Understand restrictions** clearly — grayed-out cells tell you what you can and cannot edit
+- **Stay organised** with a clear vetting workflow and Boolean Vetted checkbox
 
 Remember to:
 - ✓ Submit regularly
 - ✓ Review error messages
-- ✓ Respect locks
-- ✓ Use the context panel for help
+- ✓ Respect locks and vetted records
+- ✓ Use the context panel for help and history
 
 Happy vetting! If you have questions, reach out to your administrator.
+
+---
+
+## License & Copyright
+
+(c) 2026 Sinan Salman, Ph.D.
+
+ConduVet is released under the GPLv3 license, which is available at [GNU](https://www.gnu.org/licenses/gpl-3.0.html).

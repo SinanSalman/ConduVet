@@ -60,6 +60,13 @@ export function clearAdminToken() {
   localStorage.removeItem(ADMIN_TOKEN_KEY)
 }
 
+/** Clear every conduvet key from localStorage (used after a full reset). */
+export function clearAllLocalStorage() {
+  ;[USER_TOKEN_KEY, ADMIN_TOKEN_KEY, USER_ID_KEY, USER_NAME_KEY, TITLE_KEY].forEach(k =>
+    localStorage.removeItem(k)
+  )
+}
+
 // ── Axios instances ───────────────────────────────────────────────────────────
 
 // User axios instance
@@ -202,6 +209,11 @@ export async function updateAdminConfigUsers(usersFile) {
   const res = await adminApi.post('/admin/config/users', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+  return res.data
+}
+
+export async function resetAllData() {
+  const res = await adminApi.post('/admin/reset')
   return res.data
 }
 

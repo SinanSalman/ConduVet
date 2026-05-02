@@ -18,7 +18,7 @@ import {
   getFileLocks,
   deleteRecord,
 } from '../api'
-import { parseDataType, validateCell, formatDate, formatDateTime, renderUrlsAsLinks, normalizeDateString } from '../utils/schemaHelpers.jsx'
+import { parseDataType, validateCell, formatDate, formatDateTime, renderUrlsAsLinks, normalizeDateString, toBoolean } from '../utils/schemaHelpers.jsx'
 import ContextPanel from '../components/ContextPanel'
 
 ModuleRegistry.registerModules([ClientSideRowModelModule])
@@ -31,9 +31,10 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 // because some workbooks include these fields in their Schema sheet as well.
 const SYSTEM_FIELD_NAMES = new Set(['owner', 'vetter', 'record vetter', 'last updated', 'record status'])
 
-// Lowercase name of the vetting status field as it appears in the schema.
-// Matched case-insensitively so any casing in the Excel sheet works.
-const VETTING_STATUS_FIELD = 'vetting status'
+// Lowercase names that identify the vetting-status field. Includes the
+// current name ("vetted" — boolean) and legacy names ("vetting status",
+// "record vetting status") so existing workbooks continue to work.
+const VETTING_STATUS_FIELDS = new Set(['vetted', 'vetting status', 'record vetting status'])
 
 /**
  * Build AG Grid column definitions from schema.
@@ -44,6 +45,21 @@ const VETTING_STATUS_FIELD = 'vetting status'
  * @param {Function} onDeleteRecord - callback function(recordId) for delete button
  */
 function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null) {
+  // Resolve the canonical vetting-status field name from the schema once,
+  // so per-cell handlers can read its value without repeatedly scanning row data.
+  const vettingFieldDef = schema.find(f =>
+    VETTING_STATUS_FIELDS.has(f.field_name.toLowerCase())
+  )
+  const vettingFieldName = vettingFieldDef?.field_name || null
+
+  // Returns true when the row is "vetted-locked" for the current user —
+  // i.e. they are the owner (not the vetter) and the vetter has marked Vetted = true.
+  const isVettedLockedForCurrentUser = rowData => {
+    if (isAdmin || !vettingFieldName) return false
+    const isVetter = rowData?.vetter?.toUpperCase() === currentUserId
+    if (isVetter) return false
+    return toBoolean(rowData?.data?.[vettingFieldName])
+  }
   // Cell renderer that makes URLs clickable
   const urlCellRenderer = (params) => {
     const value = params.value
@@ -74,7 +90,7 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
     const parsed = parseDataType(field.data_type)
 
     const isVettingStatusField =
-      !isAdmin && field.field_name.toLowerCase() === VETTING_STATUS_FIELD
+      !isAdmin && VETTING_STATUS_FIELDS.has(field.field_name.toLowerCase())
 
     const col = {
       field: `data.${field.field_name}`,
@@ -106,8 +122,12 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       }
     } else {
       col.editable = params => {
-        // Disable editing if locked by another user
+        // Disable editing if locked by another user (active-edit lock)
         if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
+          return false
+        }
+        // Vetted-lock: owner cannot edit a record the vetter has marked vetted
+        if (isVettedLockedForCurrentUser(params.data)) {
           return false
         }
         return true
@@ -116,12 +136,54 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
           return { backgroundColor: '#f3f4f6', color: '#9ca3af', opacity: '0.6' }
         }
+        if (isVettedLockedForCurrentUser(params.data)) {
+          return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
+        }
         const err = validateCell(params.value, field, params.data?.data)
         return err ? { backgroundColor: '#fee2e2', borderColor: '#fca5a5' } : {}
       }
     }
 
-    if (parsed.type === 'list') {
+    if (parsed.type === 'boolean') {
+      // Capture the editability rule (set above for vetting / lock gates)
+      // so the checkbox respects the same permissions.
+      const editableRule = col.editable
+      const isEditable = params =>
+        typeof editableRule === 'function' ? editableRule(params) : editableRule !== false
+
+      // Render as a true/false checkbox. Use a custom renderer so the cell
+      // shows an actual checkbox rather than the string "true"/"false".
+      col.cellRenderer = params => {
+        const checked = toBoolean(params.value)
+        const editable = isEditable(params)
+        return (
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={!editable}
+            onChange={e => {
+              // setDataValue triggers onCellValueChanged, which marks the row dirty.
+              params.node.setDataValue(params.colDef.field, e.target.checked)
+            }}
+            style={{ cursor: editable ? 'pointer' : 'not-allowed' }}
+          />
+        )
+      }
+      // The custom renderer handles edits directly via setDataValue; suppress
+      // AG Grid's default text editor (which would otherwise open on double-click).
+      col.editable = false
+      // Coerce any stored string ("true"/"false") to a real boolean for display.
+      col.valueGetter = params => {
+        const raw = params.data?.data?.[field.field_name]
+        return toBoolean(raw)
+      }
+      col.valueSetter = params => {
+        if (!params.data) return false
+        if (!params.data.data) params.data.data = {}
+        params.data.data[field.field_name] = toBoolean(params.newValue)
+        return true
+      }
+    } else if (parsed.type === 'list') {
       col.cellEditor = 'agSelectCellEditor'
       col.cellEditorParams = { values: parsed.options || [] }
     } else if (parsed.type === 'multiple') {
@@ -176,11 +238,39 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
   cols.push({
     field: 'record_status',
     headerName: 'Record Status',
-    editable: true,
+    editable: params => {
+      // Admin can always edit
+      if (isAdmin) return true
+      // In user mode: owner cannot edit if vetted, but vetter can always edit
+      const isOwner = params.data?.owner?.toUpperCase() === currentUserId
+      const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
+      // Vetter can always edit
+      if (isVetter) return true
+      // Owner cannot edit if vetted (vetted-lock)
+      if (isOwner && isVettedLockedForCurrentUser(params.data)) {
+        return false
+      }
+      // Owner can edit (when not vetted), others cannot
+      return isOwner
+    },
     cellEditor: 'agSelectCellEditor',
     cellEditorParams: { values: ['Old', 'New', 'Updated', 'Delete'] },
     width: 120,
     cellStyle: params => {
+      const isOwner = params.data?.owner?.toUpperCase() === currentUserId
+      const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
+      // If not owner and not vetter and not admin, grey out
+      if (!isOwner && !isVetter && !isAdmin) {
+        return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
+      }
+      // Check lock status
+      if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
+        return { backgroundColor: '#f3f4f6', color: '#9ca3af', opacity: '0.6' }
+      }
+      // Owner vetted-lock
+      if (isOwner && isVettedLockedForCurrentUser(params.data)) {
+        return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
+      }
       const s = params.value
       if (s === 'Old')      return { color: '#2c2c2c', fontWeight: '600' }
       if (s === 'New')      return { color: '#16a34a', fontWeight: '600' }
@@ -440,16 +530,19 @@ export default function DataEntry({ isAdmin = false }) {
     setAddRecordError(null)
     try {
       const newRecord = await addNewRecord(fileId)
-      // Set record vetting status to "Unvetted" by default
+      // Default the vetting-status field for new records.
       if (!newRecord.data) newRecord.data = {}
 
       // Find the actual vetting status field name in the schema (case-insensitive match)
       const vettingStatusField = schema.find(
-        f => f.field_name.toLowerCase() === VETTING_STATUS_FIELD.toLowerCase()
+        f => VETTING_STATUS_FIELDS.has(f.field_name.toLowerCase())
       )
 
       if (vettingStatusField) {
-        newRecord.data[vettingStatusField.field_name] = 'Unvetted'
+        const parsed = parseDataType(vettingStatusField.data_type)
+        // Boolean "Vetted" defaults to false; legacy list-based "Vetting Status" → "Unvetted".
+        newRecord.data[vettingStatusField.field_name] =
+          parsed.type === 'boolean' ? false : 'Unvetted'
       }
 
       setRowData(prev => [...prev, newRecord])

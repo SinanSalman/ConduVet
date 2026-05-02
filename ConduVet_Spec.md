@@ -62,9 +62,9 @@ Z2345,firstname2 lastname2,xyz789
 
 ## Excel File Format
 
-Each Excel workbook uploaded by the admin must contain exactly two sheets:
+Each Excel workbook uploaded by the admin must contain the following sheets:
 
-### Sheet: `Data`
+### Sheet: `Data` (required)
 
 Contains the records to be reviewed or updated. The first row is the header. Required columns (at minimum):
 
@@ -75,7 +75,7 @@ Contains the records to be reviewed or updated. The first row is the header. Req
 
 All other columns are defined by the Schema sheet.
 
-### Sheet: `Schema`
+### Sheet: `Schema` (required)
 
 A table with the following columns (all required):
 
@@ -96,6 +96,7 @@ A table with the following columns (all required):
 | `Number (a,b)` | Numeric input, value must be in range [a, b] |
 | `Multiple (a,b,c,...)` | Multi-select; stored as comma-separated values |
 | `List (a,b,c,...)` | Single-select dropdown |
+| `Boolean` | Checkbox (true/false). Stored as boolean. Accepts: `true`/`false`, `1`/`0`, `yes`/`no` (case-insensitive) |
 | `Date (DD/MM/YYYY)` | Date picker; accepts DD/MM/YYYY format with flexible spacing (single digits: 1/1/2024 or 01/01/2024) |
 | `Date (DD/MM/YYYY HH:MM:SS)` | Datetime picker; accepts flexible spacing for date and time components |
 
@@ -105,12 +106,26 @@ The `Depends on` column encodes conditional mandatory rules. If the condition ev
 
 Syntax: `FieldName = value` or multiple conditions separated by `or`.
 
-Examples from `Research_Projects.xlsx`:
+Examples:
 - `Joint Industry Research Indicator = Y` — field is required when that indicator is Y
 - `Type of industry contribution = F or B` — field is required when contribution is F or B
-- `International_Partner_Intellectual Contribution = O` — required only when value is O
 
-The parser must handle all three patterns above. Leading/trailing whitespace in field names and values must be trimmed before comparison.
+The parser must handle all patterns above. Leading/trailing whitespace in field names and values must be trimmed before comparison.
+
+### Sheet: `Edit History` (optional)
+
+If present, this sheet is imported as the initial edit history for the dataset. Expected columns:
+
+| Column | Description |
+|---|---|
+| `Record ID` | The original record ID (remapped to new IDs on import) |
+| `Field Name` | Name of the field that was changed |
+| `Old Value` | Previous value |
+| `New Value` | New value after the change |
+| `Changed By` | User ID of who made the change |
+| `Changed At` | Timestamp of the change |
+
+If the sheet is absent, no prior edit history is assumed. This sheet is always included in downloads and backups, making workbooks fully portable across ConduVet instances.
 
 ---
 
@@ -133,6 +148,7 @@ After login. Functions:
   - Validate that both `Data` and `Schema` sheets exist.
   - Validate that every `Field Name` in Schema matches a column in Data.
   - Validate that no column in Data is missing from Schema (warn but do not block for system columns: `Owner`, `Record Vetter`, `Last Updated`, `Record Status`).
+  - Import the optional `Edit History` sheet if present, remapping record IDs to the newly assigned database IDs.
   - Display specific, field-level error messages if validation fails.
   - On success, persist data to PostgreSQL and display a confirmation message.
 - Remove an uploaded file (soft delete; data retained in DB, file removed from active list).
@@ -140,6 +156,7 @@ After login. Functions:
 
 **Configuration**
 - Re-upload a new configuration YAML at any time to replace current settings (including `auto_logout_minutes`).
+- **Reset All Data**: Permanently deletes all datasets, user accounts, and configuration, returning the app to its initial unconfigured state. Requires explicit confirmation. After a successful reset, the admin is redirected to the setup page.
 
 **Data Access and Editing**
 - View and edit all records for any uploaded file (full access, not filtered by Owner).
@@ -150,18 +167,17 @@ After login. Functions:
 - Download any data file as an Excel workbook. The download includes three sheets:
   1. **Data sheet**: Current state of all records with all columns (including Owner, Record Vetter, Last Updated, Record Status, and Record ID)
   2. **Schema sheet**: Field definitions (original schema)
-  3. **Edit History sheet**: Complete audit trail of all field changes with Record ID, Field Name, Old Value, New Value, Changed By (user ID), and Changed At (timestamp)
-- The file is compatible with re-uploading to a new ConduVet instance.
+  3. **Edit History sheet**: Complete audit trail of all field changes with Record ID, Field Name, Old Value, New Value, Changed By (user ID), and Changed At (timestamp). Row additions and deletions are also included.
+- The file is fully compatible with re-uploading to a new ConduVet instance.
 
 **Reports**
 
 All reports are rendered on-screen as a table and downloadable as Excel files.
 
-| Report | Description |
-|---|---|
-| Records updated or added by user | Grouped by userid; shows count and list of record IDs touched |
-| Records updated or added by record | Grouped by record; shows which users touched it and when |
-| Untouched records | Grouped by userid; Records where `Record Status` is still `Unvetted` since file upload |
+| Report | Columns | Description |
+|---|---|---|
+| By User | Owner, Total, New, Updated, Old, Delete | Record counts grouped by owner, broken down by status |
+| By Record | ID, Owner, Status, Last Updated, Field Changes | One row per record with its edit count and last-updated timestamp |
 
 ---
 
@@ -192,17 +208,37 @@ Displays one button per active data file uploaded by the admin. Button label is 
   - `Number (a,b)` → numeric cell editor with min/max validation
   - `Multiple (...)` → text input field; users can enter comma-separated values
   - `List (...)` → AG Grid select cell editor (single value)
+  - `Boolean` → checkbox rendered inline; click to toggle; respects all lock and permission rules
   - `Date (DD/MM/YYYY)` → date picker cell editor accepting flexible formats
 - Keyboard navigation: Tab and arrow keys move between cells. Cell focus drives the context panel (see below).
 - **URLs are automatically detected and made clickable** in cell display (http://, https://, ftp://, www., etc.)
 
+#### Vetting Workflow & Vetted-Lock
+
+- **Vetted field**: A `Boolean` field named `Vetted` (or legacy names `Vetting Status` / `Record Vetting Status`) represents the vetting approval state.
+  - Only the assigned **vetter** can change this field.
+  - The owner and other users see it as read-only.
+- **Vetted-lock**: When the vetter sets `Vetted = true`, the record is locked for the **owner**. While vetted:
+  - The owner cannot edit any data field or the Record Status.
+  - The vetter can still edit all fields including the Record Status.
+  - Admin can always edit all fields.
+  - Locked cells are visually grayed out for the owner.
+- **Vetted-lock release**: The vetter unchecks `Vetted` to allow the owner to edit again.
+
+#### Record Status Editability
+
+- **Owner**: Can edit Record Status only when the record is not vetted (`Vetted = false`). Grayed out when vetted.
+- **Vetter**: Can always edit Record Status, regardless of vetted state.
+- **Admin**: Can always edit Record Status.
+- Record Status changes are tracked in the edit history.
+
 #### Record Locking & Concurrent Edit Prevention
 
 - **Hard record locks**: When a user starts editing any field in a record, the entire record is locked until submit/logout/session expiration.
-- **Lock visualization**: 
+- **Lock visualization**:
   - Lock icon (🔒) displayed on locked records
   - Lock status shown in context panel with locked-by user ID and locked-at timestamp
-  - Other users cannot edit locked records
+  - Other users cannot edit locked records (cells are grayed out)
 - **Lock release**:
   - Automatic unlock on successful submit
   - Automatic unlock on logout
@@ -247,18 +283,20 @@ Split into two columns:
   - `Owner` set to current user's userid
   - `Record Status` set to `New`
   - `Record Vetter` auto-assigned to vetter with fewest records in the file; or to admin account if no vetters exist
-  - `Vetting Status` (if present in schema) set to `Unvetted`
-- **Record Vetting Status** field (if present): Dropdown showing `Unvetted`, `Vetted`, etc. Only the assigned vetter can edit this field.
-- **Record Status** field: Editable dropdown: `Old`, `Updated`, `Delete`, `New` (user can change status).
+  - `Vetted` (Boolean) defaulted to `false`; or `Unvetted` if using a legacy List-type vetting field
+- **Record Vetter** (system field): Visible to admin only; shows the assigned vetter's userid.
+- **Vetted** field (Boolean): Only the assigned vetter can edit. Checking it locks the record for the owner.
+- **Record Status** field: Editable dropdown (`Old`, `Updated`, `Delete`, `New`). Owner-editable when not vetted; vetter-editable always.
 - **Last Updated** is read-only in the grid; auto-populated with current datetime on submit.
-- **Delete button** (row-level): Assigned vetter can delete their records; confirmation required.
+- **Delete button** (row-level): Assigned vetter can delete their records; confirmation required. Deletion is recorded in edit history with the original record ID preserved in `old_value`.
 
 #### Submit
 
-- Submit button at the bottom of the grid.
+- Submit button at the top of the grid.
 - Runs full validation before saving.
 - **Date normalization**: Dates are normalized to DD/MM/YYYY format (leading zeros added: 1/1/2024 → 01/01/2024).
-- On success, saves all changes to the database, logs changed field values to the history table, unlocks the record, and returns the user to the dashboard.
+- On success, saves all changes to the database, logs changed field values (including Record Status) to the history table, unlocks the record, and returns the user to the dashboard.
+- **Vetted-lock enforcement**: If an owner attempts to submit changes to a record the vetter has marked as vetted, the submission is rejected with a per-record error.
 - **Detailed error reporting**: Field-level errors are highlighted; user can fix and resubmit.
 
 ---
@@ -290,28 +328,32 @@ id (PK), filename, display_name, uploaded_at, is_active
 One row per field per file.
 
 ```
-id (PK), file_id (FK), field_name, description, data_type, sample_data, depends_on, accept_null, field_order
+id (PK), file_id (FK → data_files), field_name, description, data_type, sample_data, depends_on, accept_null, field_order
 ```
 
 ### `data_records`
 One row per data record per file. Data stored as JSONB.
 
 ```
-id (PK), file_id (FK), owner, vetter, record_data (JSONB), record_status, last_updated, created_at,
-is_locked, locked_by, locked_at
+id (PK), file_id (FK → data_files), owner, vetter, record_data (JSONB), record_status,
+last_updated, created_at, is_locked, locked_by, locked_at
 ```
 
-**New columns for record locking:**
-- `is_locked` (Boolean): Flag indicating if record is being edited
-- `locked_by` (String): User ID who locked it
-- `locked_at` (DateTime): When lock was acquired
+- `is_locked` (Boolean): Flag indicating if record is being actively edited
+- `locked_by` (String): User ID who holds the lock
+- `locked_at` (DateTime): When the lock was acquired
 
 ### `field_history`
-Audit trail for individual field changes.
+Audit trail for individual field changes, including Record Status changes and system events.
 
 ```
-id (PK), record_id (FK, CASCADE delete), file_id (FK), field_name, old_value, new_value, changed_by (userid), changed_at
+id (PK), record_id (FK → data_records, ON DELETE SET NULL, nullable),
+file_id, field_name, old_value, new_value, changed_by (userid), changed_at
 ```
+
+- `record_id` is **nullable**. When a record is deleted, history rows are preserved with `record_id = NULL`. The original record ID is stored in `old_value` for `_ROW_DELETED` events.
+- System event field names: `_ROW_ADDED` (on record creation), `_ROW_DELETED` (on record deletion).
+- `Record Status` changes are logged as regular field history entries with `field_name = "Record Status"`.
 
 ---
 
@@ -338,9 +380,14 @@ id (PK), record_id (FK, CASCADE delete), file_id (FK), field_name, old_value, ne
 
 ### Record Vetting Workflow
 - **Vetter assignment**: Auto-assigned on record creation or manually assigned by admin.
-- **Vetting permissions**: Only assigned vetter can edit the vetting status field.
+- **Vetting permissions**: Only assigned vetter can edit the `Vetted` (Boolean) field.
+- **Vetted-lock**: When `Vetted = true`, the owner is locked out of all edits. Vetter and admin retain full edit access.
 - **Record deletion**: Only assigned vetter can delete their records.
 - **Flexible vetter management**: Admin can reassign vetters or change record ownership at any time.
+
+### Record Status
+- Owner-editable when the record is not vetted; vetter and admin can always edit.
+- All status changes are recorded in the edit history for a full audit trail.
 
 ### Concurrent Edit Prevention
 - Records are locked while being edited by any user.
@@ -353,14 +400,20 @@ id (PK), record_id (FK, CASCADE delete), file_id (FK), field_name, old_value, ne
 - Graceful cleanup on timeout (locks released, user logged out).
 
 ### Data Integrity & Audit
-- Complete edit history with user names and timestamps.
+- Complete edit history with user names and timestamps, including Record Status changes.
+- Row addition and deletion events logged as system events in the history.
 - URL detection and hyperlinking throughout the UI.
 - Detailed validation messages guide users to correct invalid entries.
-- All deletions recorded in audit trail.
 
-### Excel Export
-- Downloads include three sheets: Data (current state with Record ID), Schema (definitions), and Edit History (audit trail).
-- Compatible with re-uploading for data migration or backup.
+### Excel Import / Export
+- Downloads include three sheets: Data, Schema, and Edit History (full audit trail).
+- Uploads accept an optional Edit History sheet to pre-populate audit history.
+- Fully compatible with re-uploading for data migration or backup.
+
+### Reset All Data
+- Admin can permanently wipe all datasets, user accounts, and configuration.
+- Requires explicit confirmation before proceeding.
+- Redirects to the setup wizard after a successful reset.
 
 ---
 
@@ -373,6 +426,7 @@ The following is extracted directly from the Schema sheet of the reference file.
 - `Number (a,b)` — e.g., `Number (2025,2040)`, `Number (0,999999999)`, `Number (0,100)`
 - `Multiple (...)` — e.g., Funding Source with values `G,BS,HEI,NO,IF,SF`; Field of R&D with ~40 codes
 - `List (...)` — e.g., Priority Technology `(CS,AS,AM,SS,DE,CR,QU,AR,PR,BI,BD,OT)`, Status `(A,O,C)`, TRL `(TRL-1,...,TRL-9)`
+- `Boolean` — e.g., `Vetted` field (vetting approval checkbox)
 - `Date (DD/MM/YYYY)` — Start Date, End Date
 - `Date (DD/MM/YYYY HH:MM:SS)` — Last Updated
 
@@ -397,14 +451,16 @@ The following is extracted directly from the Schema sheet of the reference file.
 conduvet/
 ├── backend/
 │   ├── main.py
-│   ├── config.py
+│   ├── database.py
+│   ├── rate_limiter.py
 │   ├── auth/
 │   │   ├── jwt.py
 │   │   └── ldap_stub.py          # LDAP extension point
 │   ├── routers/
 │   │   ├── admin.py
 │   │   ├── auth.py
-│   │   └── data.py
+│   │   ├── data.py
+│   │   └── _helpers.py           # Shared helpers (log_field_changes, record_to_response)
 │   ├── models/
 │   │   └── db_models.py
 │   ├── services/
@@ -439,11 +495,13 @@ conduvet/
 
 ## Notes for Implementation
 
-- The `schema_parser.py` module is critical. It must parse all four data type patterns and the `depends_on` expression language. Build and unit-test it independently before wiring into the grid.
-- AG Grid column definitions should be generated server-side (or assembled client-side from the schema API response) so that adding a new file automatically produces the correct grid configuration without frontend code changes.
+- The `schema_parser.py` module is critical. It must parse all data type patterns (including `Boolean`) and the `depends_on` expression language. Build and unit-test it independently before wiring into the grid.
+- AG Grid column definitions should be generated client-side from the schema API response so that adding a new file automatically produces the correct grid configuration without frontend code changes.
+- Boolean fields render as inline checkboxes using a custom `cellRenderer`. The AG Grid default text editor is suppressed; toggling happens via the checkbox `onChange` event which calls `node.setDataValue`.
 - URL detection uses regex patterns to identify http://, https://, ftp://, and www. URLs; these are converted to clickable links throughout the UI.
-- History logging must capture the old and new value on every cell change at submit time, not on every keystroke.
+- History logging must capture the old and new value on every cell change at submit time, not on every keystroke. Record Status changes are logged in the same `field_history` table.
 - Dates are accepted in flexible format (1/1/2024 or 01/01/2024) but stored and displayed as DD/MM/YYYY.
 - The Owner column should be excluded from the schema-driven column generation for regular users. For admins, it is included and editable.
-- Record locking is enforced at the database level with cascade deletes on field history to maintain referential integrity.
+- Record locking uses three columns on `data_records` (`is_locked`, `locked_by`, `locked_at`). Bulk deletes during Reset must clear tables in FK dependency order (FieldHistory → SchemaDefinition → DataRecord → DataFile → AppUser → AppConfig) since bulk deletes bypass ORM cascades.
 - Session timeout is configurable and monitored client-side; all user activity resets the timer.
+- The vetted-lock is enforced on both the frontend (cell editability, visual graying) and the backend (submit endpoint rejects vetted-record changes from the owner).

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import (
     Integer, String, Boolean, DateTime, ForeignKey, Text, func
 )
@@ -109,17 +110,18 @@ class DataRecord(Base):
     data_file: Mapped["DataFile"] = relationship(
         "DataFile", back_populates="data_records"
     )
-    field_history: Mapped[list["FieldHistory"]] = relationship(
-        "FieldHistory", back_populates="data_record", cascade="all, delete-orphan"
-    )
+    # Note: no ORM cascade to FieldHistory — the DB FK uses ON DELETE SET NULL,
+    # so history rows are preserved (with record_id=NULL) when a record is deleted.
 
 
 class FieldHistory(Base):
     __tablename__ = "field_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    record_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("data_records.id", ondelete="CASCADE"), nullable=False, index=True
+    # Nullable so that deletion-event rows survive after the record is removed.
+    # ON DELETE SET NULL means the FK is cleared rather than the history row being dropped.
+    record_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("data_records.id", ondelete="SET NULL"), nullable=True, index=True
     )
     file_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     field_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -130,6 +132,4 @@ class FieldHistory(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    data_record: Mapped["DataRecord"] = relationship(
-        "DataRecord", back_populates="field_history"
-    )
+    # No back-reference to DataRecord — record may be NULL for deleted-record events.

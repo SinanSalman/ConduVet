@@ -8,6 +8,7 @@
  *   Multiple (a,b,c,...)          → { type: 'multiple', options: [...] }
  *   Date (DD/MM/YYYY)             → { type: 'date' }
  *   Date (DD/MM/YYYY HH:MM:SS)    → { type: 'datetime' }
+ *   Boolean / Bool                → { type: 'boolean' }
  */
 export function parseDataType(dataType) {
   if (!dataType) return { type: 'text' }
@@ -191,7 +192,26 @@ export function validateCell(value, fieldDef, rowData) {
     }
   }
 
+  if (parsed.type === 'boolean') {
+    if (typeof value === 'boolean') return null
+    const s = String(value).trim().toLowerCase()
+    if (!['true', 'false', '1', '0', 'yes', 'no'].includes(s)) {
+      return `"${fieldDef.field_name}": "${value}" is not a valid boolean (use true or false).`
+    }
+  }
+
   return null
+}
+
+/**
+ * Coerce any incoming value (boolean, string, number, null) into a true/false boolean.
+ * Strings "true", "1", "yes" (case-insensitive) → true; everything else → false.
+ */
+export function toBoolean(value) {
+  if (typeof value === 'boolean') return value
+  if (value === null || value === undefined) return false
+  const s = String(value).trim().toLowerCase()
+  return s === 'true' || s === '1' || s === 'yes'
 }
 
 /** Format a number for display: drop the decimal part if it's a whole number. */

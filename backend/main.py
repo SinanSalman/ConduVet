@@ -137,6 +137,43 @@ def _run_migrations():
                 )
                 conn.commit()
 
+        # Migration 005: make field_history.record_id nullable and change FK to SET NULL.
+        # This preserves history rows when a record is deleted (record_id becomes NULL).
+        nullable_check = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'field_history' AND column_name = 'record_id'"
+            )
+        )
+        nullable_row = nullable_check.fetchone()
+        if nullable_row and nullable_row[0] == 'NO':
+            # Drop existing FK (may be CASCADE from migration 004)
+            fk_result = conn.execute(
+                text(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_name = 'field_history' AND constraint_type = 'FOREIGN KEY'"
+                )
+            )
+            fk_row = fk_result.fetchone()
+            if fk_row:
+                import re as _re
+                fk_name = fk_row[0]
+                if not _re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', fk_name):
+                    raise RuntimeError(f"Unexpected FK name format: {fk_name!r}")
+                conn.execute(text(f"ALTER TABLE field_history DROP CONSTRAINT {fk_name}"))
+            # Make the column nullable
+            conn.execute(
+                text("ALTER TABLE field_history ALTER COLUMN record_id DROP NOT NULL")
+            )
+            # Re-add FK with SET NULL
+            conn.execute(
+                text(
+                    "ALTER TABLE field_history ADD CONSTRAINT field_history_record_id_fkey "
+                    "FOREIGN KEY (record_id) REFERENCES data_records(id) ON DELETE SET NULL"
+                )
+            )
+            conn.commit()
+
 
 _run_migrations()
 

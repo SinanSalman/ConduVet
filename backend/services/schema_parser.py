@@ -22,6 +22,7 @@ def parse_data_type(data_type: str) -> dict:
       List (a,b,c,...)          -> type=list,     options=[a,b,c,...]
       Date (DD/MM/YYYY)         -> type=date
       Date (DD/MM/YYYY HH:MM:SS)-> type=datetime
+      Boolean / Bool            -> type=boolean
 
     Returns:
       {
@@ -84,6 +85,11 @@ def parse_data_type(data_type: str) -> dict:
         options = [o.strip() for o in list_match.group(1).split(",")]
         result["type"] = "list"
         result["options"] = options
+        return result
+
+    # Boolean / Bool — bare keyword (no parentheses)
+    if re.match(r"^(boolean|bool)$", s, re.IGNORECASE):
+        result["type"] = "boolean"
         return result
 
     # Fallback — treat as plain text
@@ -310,5 +316,17 @@ def validate_cell(
                 f"'{field_name}': '{value}' is not a valid date and time. "
                 f"Use DD/MM/YYYY HH:MM:SS format (e.g. 31/12/2024 14:30:00)."
             )
+
+    elif dtype == "boolean":
+        # Accept Python bools, or strings that resemble booleans
+        if isinstance(value, bool):
+            pass
+        else:
+            str_val = str(value).strip().lower()
+            if str_val not in ("true", "false", "1", "0", "yes", "no"):
+                return (
+                    f"'{field_name}': '{value}' is not a valid boolean. "
+                    f"Use true or false."
+                )
 
     return None

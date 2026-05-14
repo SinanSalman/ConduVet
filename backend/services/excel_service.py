@@ -3,7 +3,7 @@ Excel parsing and export using openpyxl only (no pandas).
 """
 
 import io
-from datetime import datetime, date
+from datetime import datetime, date, time
 from typing import Any, Optional
 
 import openpyxl
@@ -31,9 +31,9 @@ SCHEMA_HEADERS = [
 def _cell_value(cell) -> Any:
     """Return a cleaned, JSON-serialisable cell value (strip strings, keep None for empty).
 
-    openpyxl returns date/datetime cells as Python datetime objects.  These are
+    openpyxl returns date/datetime/time cells as Python datetime objects.  These are
     not JSON-serialisable and would crash the JSONB insert.  We normalise them to
-    DD/MM/YYYY and DD/MM/YYYY HH:MM:SS strings to match Excel format.
+    DD/MM/YYYY, DD/MM/YYYY HH:MM:SS, and HH:MM:SS strings respectively.
     """
     val = cell.value
     if val is None:
@@ -43,6 +43,8 @@ def _cell_value(cell) -> Any:
         return val.strftime("%d/%m/%Y %H:%M:%S")
     if isinstance(val, date):
         return val.strftime("%d/%m/%Y")
+    if isinstance(val, time):
+        return val.strftime("%H:%M:%S")
     if isinstance(val, str):
         val = val.strip()
         return val if val else None

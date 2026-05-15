@@ -193,11 +193,11 @@ pin_expiration_minutes: 15          # How long PINs remain valid (in minutes)
 
 # SMTP configuration for PIN email delivery
 smtp_config:
-  host: "smtp.gmail.com"           # SMTP server hostname (required)
-  port: 587                         # SMTP server port (required)
-  username: "your-email@gmail.com"  # SMTP username (required)
-  password: "your-app-password"     # SMTP password (required)
-  use_tls: true                     # Use TLS for connection (optional, default: true)
+  host: "smtp.gmail.com"             # SMTP server hostname (required)
+  port: 587                          # SMTP server port (required)
+  username: "your-email@gmail.com"   # SMTP username (required)
+  password: "your-app-password"      # SMTP password (optional - omit for no-auth SMTP)
+  use_tls: true                      # Use TLS for connection (optional, default: true)
 ```
 
 | Key | Description | Required | Default |
@@ -213,9 +213,9 @@ smtp_config:
 
 **SMTP Configuration Details (`smtp_config` section):**
 - `host` — SMTP server hostname (e.g., `smtp.gmail.com`, `smtp.office365.com`) — **required**
-- `port` — SMTP server port (typically 587 for TLS, 465 for SSL) — **required**
+- `port` — SMTP server port (typically 587 for TLS, 465 for SSL, 25 for no-auth) — **required**
 - `username` — SMTP username/sender email — **required**
-- `password` — SMTP password (use Gmail app passwords for Gmail accounts) — **required**
+- `password` — SMTP password (use Gmail app passwords for Gmail accounts) — optional (omit for no-auth SMTP)
 - `use_tls` — Use TLS encryption (optional, default: `true`)
 
 **Note:** `smtp_config` is required if you want PIN-based email authentication. If omitted, only password authentication will work.
@@ -252,16 +252,29 @@ smtp_config:
   use_tls: true
 ```
 
-*Custom SMTP Server:*
+*Custom SMTP Server (with authentication):*
 ```yaml
 user_domain: "yourdomain.com"
 pin_expiration_minutes: 10
 
 smtp_config:
   host: "mail.yourdomain.com"
-  port: 25
+  port: 587
   username: "noreply@yourdomain.com"
   password: "server-password"
+  use_tls: true
+```
+
+*No-Auth SMTP Server (local or unauthenticated):*
+```yaml
+user_domain: "yourdomain.com"
+pin_expiration_minutes: 15
+
+smtp_config:
+  host: "mail.yourdomain.com"
+  port: 25
+  username: "noreply@yourdomain.com"
+  # password: omitted for no-auth SMTP
   use_tls: false
 ```
 

@@ -3,3 +3,15 @@ admin_account: "admin"
 admin_pass: "password"
 backup_dir: "./backups"
 auto_logout_minutes: 30  # Optional, defaults to 30
+
+# PIN authentication settings
+user_domain: "example.com"
+pin_expiration_minutes: 15
+
+# SMTP configuration
+smtp_config:
+  host: "smtp.gmail.com"
+  port: 25
+  username: "your-email@gmail.com"
+  password: "your-app-password"
+  use_tls: False

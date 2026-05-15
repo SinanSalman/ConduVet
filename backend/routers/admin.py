@@ -156,11 +156,13 @@ def _validate_yaml(content: bytes) -> dict:
                     f"    port: 587\n"
                     f"    username: \"your-email@gmail.com\"\n"
                     f"    password: \"your-app-password\"\n"
-                    f"    use_tls: true"
+                    f"    use_tls: true\n"
+                    f"Note: password is optional for no-auth SMTP servers."
                 ),
             )
-        # Validate smtp_config fields (only SMTP-specific, not user_domain/expiry)
-        required_smtp_fields = {"host", "port", "username", "password"}
+        # Validate smtp_config required fields (host, port, username)
+        # Password is optional for no-auth SMTP servers
+        required_smtp_fields = {"host", "port", "username"}
         provided_fields = set(smtp.keys())
         if not required_smtp_fields.issubset(provided_fields):
             missing = required_smtp_fields - provided_fields
@@ -173,8 +175,7 @@ def _validate_yaml(content: bytes) -> dict:
                     f"  host: \"smtp.gmail.com\"\n"
                     f"  port: 587\n"
                     f"  username: \"your-email@gmail.com\"\n"
-                    f"  password: \"your-app-password\"\n"
-                    f"Optional: use_tls: true"
+                    f"Optional: password (for authenticated SMTP), use_tls (default: true)"
                 ),
             )
         # Validate port is integer
@@ -189,6 +190,8 @@ def _validate_yaml(content: bytes) -> dict:
         # Set defaults for optional fields
         if "use_tls" not in smtp:
             smtp["use_tls"] = True
+        if "password" not in smtp:
+            smtp["password"] = ""  # Empty password for no-auth SMTP
     else:
         # No SMTP config provided — set empty dict as default
         data["smtp_config"] = {}

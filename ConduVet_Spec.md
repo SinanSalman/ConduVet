@@ -87,6 +87,7 @@ A table with the following columns (all required):
 | `Sample Data` | Example value shown to users |
 | `Depends on` | Conditional nullability rule (see below) |
 | `Accept Null Values` | `Yes` or `No` (case-insensitive) |
+| `Protected` | `Yes` or `No` (case-insensitive); default `No`. Whether the field is read-only for record owners on existing records (see Field Protection below) |
 
 #### Data Type Syntax
 
@@ -231,6 +232,17 @@ Displays one button per active data file uploaded by the admin. Button label is 
 - **Vetter**: Can always edit Record Status, regardless of vetted state.
 - **Admin**: Can always edit Record Status.
 - Record Status changes are tracked in the edit history.
+
+#### Field-Level Protection
+
+- **Protected fields**: Fields marked as `Protected = Yes` in the Schema sheet are read-only for record **owners** on existing records.
+- **Owner behavior**:
+  - Can **view** protected field values on existing records (displayed with amber/yellow background and italicized text to indicate protection status).
+  - **Cannot edit** protected fields on existing records; attempting to submit changes to protected fields results in a validation error.
+  - **Can edit** protected fields when **adding new records** — the protection only applies after initial submission.
+  - After submission, normal protection logic applies and the field becomes read-only.
+- **Vetter & Admin**: Always have full edit access to protected fields, regardless of whether the record is new or existing.
+- **Use case**: Set critical fields (e.g., calibration parameters, institutional identifiers) as protected to ensure they remain unchanged by data owners while still allowing vetters/admins to modify them if needed.
 
 #### Record Locking & Concurrent Edit Prevention
 

@@ -327,6 +327,7 @@ One row per data field.
 | `Sample Data` | Example value shown to the user. |
 | `Depends on` | Conditional requirement rule (see below). |
 | `Accept Null Values` | `Yes` or `No`. |
+| `Protected` | `Yes` or `No` (optional, default `No`). If `Yes`, the field is read-only for record owners on existing records. |
 
 #### Data Type Syntax
 

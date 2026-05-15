@@ -223,6 +223,25 @@ def _run_migrations():
             )
             conn.commit()
 
+        # Migration 008: add is_protected column to schema_definitions
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'schema_definitions' AND column_name = 'is_protected'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE schema_definitions ADD COLUMN IF NOT EXISTS is_protected BOOLEAN NOT NULL DEFAULT FALSE")
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_schema_definitions_is_protected "
+                    "ON schema_definitions (is_protected)"
+                )
+            )
+            conn.commit()
+
 
 _run_migrations()
 

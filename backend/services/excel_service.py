@@ -221,6 +221,12 @@ def parse_excel(file_bytes: bytes) -> tuple[list[dict], list[dict], list[dict]]:
         accept_null_raw = _cell_value(row[schema_header_map["accept null values"]])
         accept_null = _to_bool(accept_null_raw)
 
+        # Parse optional "Protected" column (for field-level protection)
+        is_protected_raw = None
+        if "protected" in schema_header_map:
+            is_protected_raw = _cell_value(row[schema_header_map["protected"]])
+        is_protected = _to_bool(is_protected_raw)
+
         schema_list.append(
             {
                 "field_name": str(field_name),
@@ -229,6 +235,7 @@ def parse_excel(file_bytes: bytes) -> tuple[list[dict], list[dict], list[dict]]:
                 "sample_data": str(sample_data) if sample_data is not None else "",
                 "depends_on": str(depends_on) if depends_on is not None else "",
                 "accept_null": accept_null,
+                "is_protected": is_protected,
                 "field_order": len(schema_list),
             }
         )

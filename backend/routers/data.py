@@ -344,6 +344,20 @@ def submit_records(
             }
             continue
 
+        # Field-level protection: check if owner is trying to edit protected fields on existing records
+        if record is not None and not is_vetter:
+            for field_name, new_val in data.items():
+                schema_def = schema_by_name.get(field_name)
+                if schema_def and schema_def.is_protected:
+                    old_val = (record.record_data or {}).get(field_name)
+                    if old_val != new_val:  # Owner tried to change a protected field
+                        if str(record_id) not in field_errors:
+                            field_errors[str(record_id)] = {}
+                        field_errors[str(record_id)][field_name] = (
+                            f"'{field_name}' is a protected field and cannot be edited. "
+                            f"Contact your vetter to request changes."
+                        )
+
         # Validate each field
         errors_for_record: dict[str, str] = {}
         for field_name, schema_def in schema_by_name.items():

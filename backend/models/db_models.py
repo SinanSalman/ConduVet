@@ -73,6 +73,7 @@ class SchemaDefinition(Base):
     sample_data: Mapped[str] = mapped_column(Text, nullable=True)
     depends_on: Mapped[str] = mapped_column(Text, nullable=True)
     accept_null: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_protected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     field_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     data_file: Mapped["DataFile"] = relationship(

@@ -219,6 +219,46 @@ Record Status changes are tracked in the **edit history**, visible in the contex
 
 ---
 
+## Protected Fields
+
+### What are Protected Fields?
+
+Some fields may be marked as **protected** by your administrator. Protected fields are important or sensitive values that should remain stable once set — for example, calibration parameters, institutional identifiers, or other critical baseline data.
+
+### How Protected Fields Work
+
+**For existing records:**
+- You **can view** protected field values
+- Protected fields are displayed with an **amber/yellow background and italicized text** to indicate they cannot be edited
+- You **cannot edit** protected fields on existing records
+- If you try to submit changes to a protected field, the submission will be rejected with an error message
+
+**For new records:**
+- When you **create a new record**, you **can edit protected fields**
+- Once you submit the record, those fields become protected and read-only for future edits
+- Only your vetter or the administrator can modify protected fields after submission
+
+**For vetters and admins:**
+- Vetters and admins have **full edit access** to all fields, including protected ones, at any time
+- There are no restrictions based on protection status for these roles
+
+### Example Scenario
+
+1. You create a new research project record with fields: Project ID, Project Name, Start Date, and Budget
+2. All fields are editable while creating the new record
+3. You submit the record — it is now part of the dataset
+4. A vetter reviews and approves your project
+5. Later, you want to update the Project Name — you can edit it freely
+6. But the Budget field is marked as protected — you cannot change it
+7. Your vetter approves the name change but notices the budget needs adjustment
+8. The vetter can edit the Budget field directly, and you will see the change on the next refresh
+
+### Getting Help with Protected Fields
+
+If you need to modify a protected field on an existing record, contact your vetter or administrator. They can make the change for you.
+
+---
+
 ## Record Locking
 
 ### What is Record Locking?

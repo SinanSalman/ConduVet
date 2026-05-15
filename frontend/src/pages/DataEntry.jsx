@@ -43,8 +43,9 @@ const VETTING_STATUS_FIELDS = new Set(['vetted', 'vetting status', 'record vetti
  * @param {boolean} isAdmin      - admin view bypasses per-row edit restrictions
  * @param {string}  currentUserId - uppercase userid of the logged-in user (user mode only)
  * @param {Function} onDeleteRecord - callback function(recordId) for delete button
+ * @param {Set}  newRecordIds    - set of record IDs for newly created records
  */
-function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null) {
+function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null, newRecordIds = new Set()) {
   // Resolve the canonical vetting-status field name from the schema once,
   // so per-cell handlers can read its value without repeatedly scanning row data.
   const vettingFieldDef = schema.find(f =>
@@ -130,6 +131,12 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         if (isVettedLockedForCurrentUser(params.data)) {
           return false
         }
+        // Field-level protection: owner cannot edit protected fields on existing records
+        // (but CAN edit protected fields on newly created records)
+        const isNewRecord = newRecordIds.has(params.data?.id)
+        if (field.is_protected && !isNewRecord && !isAdmin) {
+          return false
+        }
         return true
       }
       col.cellStyle = params => {
@@ -138,6 +145,16 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         }
         if (isVettedLockedForCurrentUser(params.data)) {
           return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
+        }
+        // Visual indicator for protected fields on existing records
+        const isNewRecord = newRecordIds.has(params.data?.id)
+        if (field.is_protected && !isNewRecord && !isAdmin) {
+          return {
+            backgroundColor: '#fef3c7',  // Light yellow/amber
+            color: '#b45309',             // Darker amber text
+            opacity: '0.7',
+            fontStyle: 'italic',
+          }
         }
         const err = validateCell(params.value, field, params.data?.data)
         return err ? { backgroundColor: '#fee2e2', borderColor: '#fca5a5' } : {}
@@ -347,6 +364,18 @@ export default function DataEntry({ isAdmin = false }) {
   // Record lock status — maps record ID to lock info
   const [recordLocks, setRecordLocks] = useState({})
 
+  // Track newly created records — owners can edit protected fields on new records
+  const [newRecordIds, setNewRecordIds] = useState(new Set())
+
+  // Build schema dict for quick field lookups
+  const schemaDict = useMemo(() => {
+    const dict = {}
+    schema?.forEach(field => {
+      dict[field.field_name] = field
+    })
+    return dict
+  }, [schema])
+
   // Handle record deletion
   const handleDeleteRecord = useCallback(async (recordId) => {
     const record = rowData.find(r => r.id === recordId)
@@ -378,8 +407,8 @@ export default function DataEntry({ isAdmin = false }) {
   }, [fileId, rowData])
 
   const columnDefs = useMemo(
-    () => buildColumnDefs(schema, isAdmin, currentUserId, handleDeleteRecord),
-    [schema, isAdmin, currentUserId, handleDeleteRecord],
+    () => buildColumnDefs(schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds),
+    [schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds],
   )
 
   const defaultColDef = useMemo(() => ({
@@ -547,6 +576,8 @@ export default function DataEntry({ isAdmin = false }) {
 
       setRowData(prev => [...prev, newRecord])
       dirtyIds.current.add(newRecord.id)
+      // Track this as a new record so protected fields can be edited
+      setNewRecordIds(prev => new Set([...prev, newRecord.id]))
     } catch (err) {
       const detail = err.response?.data?.detail
       setAddRecordError(
@@ -611,6 +642,7 @@ export default function DataEntry({ isAdmin = false }) {
         await updateAdminRecords(fileId, payload)
         setSubmitMsg({ type: 'success', text: 'Records saved successfully.' })
         dirtyIds.current.clear()
+        setNewRecordIds(new Set())  // Clear new record tracking after submit
         // Unlock records for admin
         for (const record of payload) {
           try {
@@ -626,6 +658,7 @@ export default function DataEntry({ isAdmin = false }) {
           text: `Submitted successfully — ${result.saved ?? toSend.length} record(s) saved.`,
         })
         dirtyIds.current.clear()
+        setNewRecordIds(new Set())  // Clear new record tracking after submit
         // Unlock records for user
         for (const record of payload) {
           try {
@@ -792,6 +825,8 @@ export default function DataEntry({ isAdmin = false }) {
           schema={schema}
           isAdmin={isAdmin}
           recordLocks={recordLocks}
+          newRecordIds={newRecordIds}
+          rowData={rowData}
         />
       </div>
     </div>

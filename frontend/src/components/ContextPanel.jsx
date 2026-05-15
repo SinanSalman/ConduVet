@@ -12,7 +12,7 @@ import { formatDateTime, renderUrlsAsLinks } from '../utils/schemaHelpers.jsx'
  *   was text-sm  (14px) → now text-xs  (12px)
  *   was text-xs  (12px) → now text-[10px]
  */
-export default function ContextPanel({ fileId, focusedCell, schema, isAdmin, recordLocks = {} }) {
+export default function ContextPanel({ fileId, focusedCell, schema, isAdmin, recordLocks = {}, newRecordIds = new Set(), rowData = [] }) {
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState(null)
@@ -20,6 +20,9 @@ export default function ContextPanel({ fileId, focusedCell, schema, isAdmin, rec
   const fieldDef = focusedCell?.fieldName
     ? schema?.find(f => f.field_name === focusedCell.fieldName)
     : null
+
+  // Check if the focused record is a new record
+  const isNewRecord = focusedCell?.recordId ? newRecordIds.has(focusedCell.recordId) : false
 
   useEffect(() => {
     if (!focusedCell?.recordId || !focusedCell?.fieldName || !fileId) {
@@ -116,6 +119,18 @@ export default function ContextPanel({ fileId, focusedCell, schema, isAdmin, rec
             </p>
             <p className="text-red-600 text-[10px]">
               Since: {formatDateTime(recordLocks[focusedCell.recordId].locked_at)}
+            </p>
+          </div>
+        )}
+
+        {/* Protection status */}
+        {fieldDef?.is_protected && !isNewRecord && !isAdmin && (
+          <div className="bg-amber-50 border border-amber-300 rounded p-2 mb-3">
+            <p className="text-amber-700 font-semibold text-xs">
+              🔒 Protected Field
+            </p>
+            <p className="text-amber-600 text-[10px]">
+              This field is protected and cannot be edited on existing records.
             </p>
           </div>
         )}

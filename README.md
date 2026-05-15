@@ -184,19 +184,39 @@ When the database has no configuration, every page redirects to **Admin Setup** 
 title: "My Instance Title"
 admin_account: "admin"
 admin_pass: "choose-a-strong-password"
-users_file: "users.csv"
 backup_dir: "./backups"
 auto_logout_minutes: 30
+
+# SMTP configuration for PIN-based email authentication
+smtp_config:
+  host: "smtp.gmail.com"           # SMTP server hostname
+  port: 587                         # SMTP server port
+  username: "your-email@gmail.com"  # SMTP username
+  password: "your-app-password"     # SMTP password
+  user_domain: "example.com"        # Email domain for PINs (e.g., userid@example.com)
+  use_tls: true                     # Use TLS for connection (default: true)
+  pin_expiration_minutes: 15        # PIN validity in minutes (default: 15)
 ```
 
-| Key | Description |
-|---|---|
-| `title` | Shown in the header. |
-| `admin_account` | Username for the admin login at `/admin/login`. |
-| `admin_pass` | Admin password. Stored as a bcrypt hash. |
-| `users_file` | Path label for the users CSV (the file is uploaded alongside the YAML). |
-| `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. |
-| `auto_logout_minutes` | Inactivity timeout in minutes (default: 30, range: 1–480). |
+| Key | Description | Required |
+|---|---|---|
+| `title` | Shown in the header. | ✓ |
+| `admin_account` | Username for the admin login at `/admin/login`. | ✓ |
+| `admin_pass` | Admin password. Stored as a bcrypt hash. | ✓ |
+| `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. | ✓ |
+| `auto_logout_minutes` | Inactivity timeout in minutes (default: 30, range: 1–480). | optional |
+| `smtp_config` | Email configuration for PIN authentication. See below. | optional* |
+
+**SMTP Configuration Details:**
+- `host` — SMTP server hostname (e.g., `smtp.gmail.com`, `smtp.office365.com`)
+- `port` — SMTP server port (typically 587 for TLS, 465 for SSL)
+- `username` — SMTP username/sender email
+- `password` — SMTP password (use Gmail app passwords for Gmail accounts)
+- `user_domain` — Domain appended to user ID for PIN emails (e.g., `userid@zayeduniversity.ae`)
+- `use_tls` — Use TLS encryption (default: true)
+- `pin_expiration_minutes` — How long PINs remain valid (default: 15)
+
+**Note:** `smtp_config` is required if you want PIN-based email authentication. If omitted, only password authentication will work.
 
 ### 2. Prepare `users.csv`
 
@@ -379,13 +399,10 @@ Click **Submit** at the top of the grid. Full validation runs before saving. Fix
 | `DATABASE_URL` | `postgresql://conduvet:conduvet@db:5432/conduvet` | PostgreSQL connection string. |
 | `SECRET_KEY` | `conduvet-secret-key-change-in-production` | JWT signing key. **Must be changed in production.** |
 | `CORS_ORIGINS` | `*` | Comma-separated list of allowed origins, or `*` for all. |
-| `SMTP_HOST` | `localhost` | SMTP server hostname for PIN email delivery. |
-| `SMTP_PORT` | `587` | SMTP server port. |
-| `SMTP_USER` | (empty) | SMTP username. Required for PIN email authentication. |
-| `SMTP_PASSWORD` | (empty) | SMTP password. Required for PIN email authentication. |
-| `SMTP_USE_TLS` | `true` | Whether to use TLS for SMTP connections. |
-| `USER_DOMAIN` | `example.com` | Email domain appended to user ID for PIN emails (e.g., `userid@zayeduniversity.ae`). |
-| `PIN_EXPIRATION_MINUTES` | `15` | PIN validity duration in minutes. |
+| `USER_DOMAIN` | (from config.yaml) | Optional override for email domain in PINs. Normally configured in `smtp_config.user_domain`. |
+| `PIN_EXPIRATION_MINUTES` | (from config.yaml) | Optional override for PIN expiration. Normally configured in `smtp_config.pin_expiration_minutes`. |
+
+**Note:** SMTP configuration (host, port, username, password, TLS) is no longer set via environment variables. Configure it in `config.yaml` under the `smtp_config` section during admin setup or via the Configuration tab in the Admin Dashboard.
 
 Set these in `docker-compose.yml` (under `backend.environment`) or as shell environment variables for local development.
 

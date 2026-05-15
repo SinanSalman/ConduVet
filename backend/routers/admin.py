@@ -112,6 +112,63 @@ def _validate_yaml(content: bytes) -> dict:
         # Set default if not specified
         data["auto_logout_minutes"] = 30
 
+    # Validate optional smtp_config
+    if "smtp_config" in data:
+        smtp = data["smtp_config"]
+        if not isinstance(smtp, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"smtp_config must be a YAML mapping with SMTP settings. "
+                    f"Expected a dictionary, got: {type(smtp).__name__}. "
+                    f"Example:\n"
+                    f"  smtp_config:\n"
+                    f"    host: \"smtp.gmail.com\"\n"
+                    f"    port: 587\n"
+                    f"    username: \"your-email@gmail.com\"\n"
+                    f"    password: \"your-app-password\"\n"
+                    f"    use_tls: true\n"
+                    f"    user_domain: \"example.com\"\n"
+                    f"    pin_expiration_minutes: 15"
+                ),
+            )
+        # Validate smtp_config fields
+        required_smtp_fields = {"host", "port", "username", "password", "user_domain"}
+        provided_fields = set(smtp.keys())
+        if not required_smtp_fields.issubset(provided_fields):
+            missing = required_smtp_fields - provided_fields
+            pretty = ", ".join(f"'{k}'" for k in sorted(missing))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"smtp_config is missing required field(s): {pretty}. "
+                    f"All of the following must be specified:\n"
+                    f"  host: \"smtp.gmail.com\"\n"
+                    f"  port: 587\n"
+                    f"  username: \"your-email@gmail.com\"\n"
+                    f"  password: \"your-app-password\"\n"
+                    f"  user_domain: \"example.com\"\n"
+                    f"Optional: use_tls: true, pin_expiration_minutes: 15"
+                ),
+            )
+        # Validate port is integer
+        if not isinstance(smtp.get("port"), int):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"smtp_config.port must be an integer. "
+                    f"Got: {smtp.get('port')}. Example: port: 587"
+                ),
+            )
+        # Set defaults for optional fields
+        if "use_tls" not in smtp:
+            smtp["use_tls"] = True
+        if "pin_expiration_minutes" not in smtp:
+            smtp["pin_expiration_minutes"] = 15
+    else:
+        # No SMTP config provided — set empty dict as default
+        data["smtp_config"] = {}
+
     return data
 
 
@@ -213,6 +270,8 @@ async def setup(
         admin_pass_hash=admin_pass_hash,
         users_file_path=users_file_path,
         backup_dir=backup_dir,
+        auto_logout_minutes=config_data.get("auto_logout_minutes", 30),
+        smtp_config=config_data.get("smtp_config", {}),
     )
     db.add(app_config)
 
@@ -280,6 +339,7 @@ def get_config(
         "users_file_path": config.users_file_path,
         "backup_dir": config.backup_dir,
         "auto_logout_minutes": config.auto_logout_minutes,
+        "smtp_config": config.smtp_config or {},
         "created_at": config.created_at.isoformat() if config.created_at else None,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
     }
@@ -308,6 +368,8 @@ async def update_config_yaml(
     config.admin_pass_hash = pwd_context.hash(str(config_data["admin_pass"]))
     if "auto_logout_minutes" in config_data:
         config.auto_logout_minutes = config_data["auto_logout_minutes"]
+    if "smtp_config" in config_data:
+        config.smtp_config = config_data["smtp_config"]
 
     db.commit()
 
@@ -318,6 +380,7 @@ async def update_config_yaml(
         "title": config.title,
         "admin_account": config.admin_account,
         "auto_logout_minutes": config.auto_logout_minutes,
+        "smtp_config": config.smtp_config or {},
     }
 
 

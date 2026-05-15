@@ -21,13 +21,10 @@ services:
       DATABASE_URL: postgresql://conduvet:conduvet@db:5432/conduvet
       SECRET_KEY: change-this-in-production
       CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:3000"
-      SMTP_HOST: ${SMTP_HOST:-localhost}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-      USER_DOMAIN: ${USER_DOMAIN:-example.com}
-      PIN_EXPIRATION_MINUTES: ${PIN_EXPIRATION_MINUTES:-15}
+      # Optional: override USER_DOMAIN or PIN_EXPIRATION_MINUTES from environment
+      # By default, these come from config.yaml smtp_config section
+      # USER_DOMAIN: ${USER_DOMAIN:-example.com}
+      # PIN_EXPIRATION_MINUTES: ${PIN_EXPIRATION_MINUTES:-15}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./users.csv:/app/users.csv:ro

@@ -194,19 +194,21 @@ def _run_migrations():
             )
             conn.commit()
 
+        # Migration 006: add smtp_config column to app_config
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'app_config' AND column_name = 'smtp_config'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE app_config ADD COLUMN smtp_config JSONB DEFAULT '{}'::jsonb")
+            )
+            conn.commit()
+
 
 _run_migrations()
-
-# ---------------------------------------------------------------------------
-# PIN Authentication Configuration
-# ---------------------------------------------------------------------------
-SMTP_HOST = os.getenv("SMTP_HOST", "localhost")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
-USER_DOMAIN = os.getenv("USER_DOMAIN", "example.com")
-PIN_EXPIRATION_MINUTES = int(os.getenv("PIN_EXPIRATION_MINUTES", "15"))
 
 # ---------------------------------------------------------------------------
 # App

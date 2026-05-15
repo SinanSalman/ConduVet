@@ -14,12 +14,12 @@ from sqlalchemy.orm import Session
 from auth.jwt import create_access_token
 from auth.ldap_stub import auth_provider
 from database import get_db
-from models.db_models import AppUser
+from models.db_models import AppUser, AppConfig
 from rate_limiter import limiter
 from services.email_service import send_pin_email
 
-# Import PIN store and config from main
-from main import _pin_store, PIN_EXPIRATION_MINUTES, USER_DOMAIN
+# Import PIN store from main
+from main import _pin_store, send_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -97,23 +97,36 @@ async def request_pin(
             detail="User not found",
         )
 
+    # Get app config for USER_DOMAIN and PIN_EXPIRATION_MINUTES
+    config = db.query(AppConfig).first()
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Application not configured",
+        )
+
+    user_domain = os.getenv("USER_DOMAIN", config.smtp_config.get("user_domain", "example.com"))
+    pin_expiration_minutes = int(
+        os.getenv("PIN_EXPIRATION_MINUTES", config.smtp_config.get("pin_expiration_minutes", "15"))
+    )
+
     # Generate random 5-digit PIN
     pin_code = "".join(random.choices(string.digits, k=5))
 
     # Calculate expiration time
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=PIN_EXPIRATION_MINUTES)
+    expires_at = now + timedelta(minutes=pin_expiration_minutes)
 
     # Store PIN in memory (overwrites any existing PIN for this user)
-    email = f"{userid.lower()}@{USER_DOMAIN}"
+    email = f"{userid.lower()}@{user_domain}"
     _pin_store[userid] = {
         "pin": pin_code,
         "expires_at": expires_at,
         "email": email,
     }
 
-    # Send PIN via email
-    success = send_pin_email(email, userid, pin_code)
+    # Send PIN via email using the send_email function and config
+    success = send_pin_email(email, userid, pin_code, send_email, pin_expiration_minutes)
     if not success:
         # Remove PIN from store if email sending fails
         del _pin_store[userid]

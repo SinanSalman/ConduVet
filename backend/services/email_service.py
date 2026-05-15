@@ -2,26 +2,29 @@
 Email service for ConduVet PIN authentication.
 """
 
-import os
-from main import send_email
+from typing import Callable, Dict, Any
 
 
-def send_pin_email(to_email: str, userid: str, pin_code: str) -> bool:
+def send_pin_email(
+    to_email: str,
+    userid: str,
+    pin_code: str,
+    send_email_func: Callable,
+    expiration_minutes: int = 15,
+) -> bool:
     """Send PIN via email.
-
-    Uses the provided send_email() utility from main.py.
 
     Args:
         to_email: Email address to send PIN to
         userid: User ID (for greeting in email)
         pin_code: The PIN code to send
+        send_email_func: Callable function to send email (typically from main.py)
+        expiration_minutes: PIN expiration time in minutes
 
     Returns:
         True if successful, False otherwise.
     """
     subject = "Your ConduVet Login PIN"
-
-    expiration_minutes = os.getenv("PIN_EXPIRATION_MINUTES", "15")
 
     text_body = f"""Hello {userid},
 
@@ -33,8 +36,8 @@ If you did not request this PIN, please ignore this email.
 """
 
     try:
-        # Call the provided send_email() function from main.py
-        send_email(to_email, subject, text_body)
+        # Call the provided send_email function
+        send_email_func(to_email, subject, text_body)
         return True
     except Exception as e:
         print(f"Failed to send PIN email: {e}")

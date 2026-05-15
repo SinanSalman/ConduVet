@@ -242,16 +242,26 @@ Some fields may be marked as **protected** by your administrator. Protected fiel
 - Vetters and admins have **full edit access** to all fields, including protected ones, at any time
 - There are no restrictions based on protection status for these roles
 
+### Validation of Protected Fields
+
+Protected fields follow special validation rules:
+
+- **When creating a new record**: Protected fields are validated like any other field — they must match the specified format (e.g., date format must be correct) before submission.
+- **After submission on existing records**: Protected fields are NOT re-validated during subsequent submissions since they are read-only and cannot be edited by owners. This prevents frustrating validation errors for fields you cannot change.
+- **For vetters and admins**: Protected fields are always validated whenever they are edited, with no exceptions.
+
 ### Example Scenario
 
 1. You create a new research project record with fields: Project ID, Project Name, Start Date, and Budget
 2. All fields are editable while creating the new record
-3. You submit the record — it is now part of the dataset
-4. A vetter reviews and approves your project
-5. Later, you want to update the Project Name — you can edit it freely
-6. But the Budget field is marked as protected — you cannot change it
-7. Your vetter approves the name change but notices the budget needs adjustment
-8. The vetter can edit the Budget field directly, and you will see the change on the next refresh
+3. You submit the record — the Budget field (protected) is validated and must match its format
+4. Once submitted, it is now part of the dataset
+5. A vetter reviews and approves your project
+6. Later, you want to update the Project Name — you can edit it freely
+7. But the Budget field is marked as protected — you cannot change it
+8. If the Budget field has an old or unusual value, you won't see validation errors because protected fields aren't re-validated after submission
+9. Your vetter approves the name change but notices the budget needs adjustment
+10. The vetter can edit the Budget field directly (with full validation), and you will see the change on the next refresh
 
 ### Getting Help with Protected Fields
 
@@ -307,6 +317,22 @@ As you edit cells and when you submit, the app checks:
 - `"required"` — empty field that must be filled
 - `"required because [OtherField] is [value]"` — conditional requirement triggered
 - `"maximum length is 255 characters"` — text too long
+- `"is not a valid date. Use DD/MM/YYYY format"` — date doesn't match the expected format
+
+### Date Format Validation
+
+Date and datetime fields expect a specific format. The format is shown in the field description and error messages. Common formats include:
+
+- `DD/MM/YYYY` — e.g., `31/12/2024`
+- `YYYY-MM-DD` — e.g., `2024-12-31`
+- `DD.MM.YYYY` — e.g., `31.12.2024`
+- `DD/MM/YYYY HH:MM:SS` — e.g., `31/12/2024 14:30:00` (date and time)
+
+**Tips:**
+- Check the field description in the context panel to see the expected format
+- Pay attention to which separator is used: `/`, `-`, `.`, `:`, or space
+- For dates with time, include both the date and time components
+- The format is case-insensitive for day/month/year indicators (DD, dd, Dd all mean day)
 
 ### Fixing Errors
 

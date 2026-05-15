@@ -98,8 +98,8 @@ A table with the following columns (all required):
 | `Multiple (a,b,c,...)` | Multi-select; stored as comma-separated values |
 | `List (a,b,c,...)` | Single-select dropdown |
 | `Boolean` | Checkbox (true/false). Stored as boolean. Accepts: `true`/`false`, `1`/`0`, `yes`/`no` (case-insensitive) |
-| `Date (DD/MM/YYYY)` | Date picker; accepts DD/MM/YYYY format with flexible spacing (single digits: 1/1/2024 or 01/01/2024) |
-| `Date (DD/MM/YYYY HH:MM:SS)` | Datetime picker; accepts flexible spacing for date and time components |
+| `Date (format)` | Date picker with flexible format specification. Format string may use any combination of: `dd` (day), `mm` (month), `yyyy` (year); separators can be any of: `/`, `:`, `-`, `.`, or space. Examples: `DD/MM/YYYY`, `YYYY-MM-DD`, `DD.MM.YYYY` |
+| `Date (format)` with time | Datetime picker. Format string may additionally include: `HH` (hours), `MM` (minutes), `SS` (seconds). Examples: `DD/MM/YYYY HH:MM:SS`, `YYYY-MM-DD HH:MM`, `DD.MM.YYYY HH:MM:SS` |
 
 #### Depends On Syntax
 
@@ -241,7 +241,10 @@ Displays one button per active data file uploaded by the admin. Button label is 
   - **Cannot edit** protected fields on existing records; attempting to submit changes to protected fields results in a validation error.
   - **Can edit** protected fields when **adding new records** — the protection only applies after initial submission.
   - After submission, normal protection logic applies and the field becomes read-only.
-- **Vetter & Admin**: Always have full edit access to protected fields, regardless of whether the record is new or existing.
+- **Validation behavior**:
+  - **At entry time**: Protected fields are validated according to their Data Type and format specification (e.g., date format must match specification).
+  - **After submission on existing records**: Protected fields are NOT re-validated during subsequent submissions, since they become read-only anyway and cannot be edited by owners. This prevents false validation errors for read-only fields.
+  - **Vetters & Admins**: Always have full validation and edit access, regardless of record age or protected status.
 - **Use case**: Set critical fields (e.g., calibration parameters, institutional identifiers) as protected to ensure they remain unchanged by data owners while still allowing vetters/admins to modify them if needed.
 
 #### Record Locking & Concurrent Edit Prevention

@@ -338,8 +338,8 @@ One row per data field.
 | `List (A,B,C)` | Single-select dropdown |
 | `Multiple (A,B,C)` | Multi-select; stored as comma-separated values |
 | `Boolean` | Checkbox (true/false). Accepts `true`/`false`, `1`/`0`, `yes`/`no` |
-| `Date (DD/MM/YYYY)` | Date picker |
-| `Date (DD/MM/YYYY HH:MM:SS)` | Datetime picker |
+| `Date (format)` | Date picker with flexible format. Supports: `dd`, `mm`, `yyyy` with separators `/`, `:`, `-`, `.`, or space. Examples: `DD/MM/YYYY`, `YYYY-MM-DD`, `DD.MM.YYYY` |
+| `Date (format)` with time | Datetime picker. Additionally supports: `HH`, `MM`, `SS`. Examples: `DD/MM/YYYY HH:MM:SS`, `YYYY-MM-DD HH:MM` |
 
 #### Depends On Syntax
 

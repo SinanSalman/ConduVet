@@ -379,6 +379,13 @@ Click **Submit** at the top of the grid. Full validation runs before saving. Fix
 | `DATABASE_URL` | `postgresql://conduvet:conduvet@db:5432/conduvet` | PostgreSQL connection string. |
 | `SECRET_KEY` | `conduvet-secret-key-change-in-production` | JWT signing key. **Must be changed in production.** |
 | `CORS_ORIGINS` | `*` | Comma-separated list of allowed origins, or `*` for all. |
+| `SMTP_HOST` | `localhost` | SMTP server hostname for PIN email delivery. |
+| `SMTP_PORT` | `587` | SMTP server port. |
+| `SMTP_USER` | (empty) | SMTP username. Required for PIN email authentication. |
+| `SMTP_PASSWORD` | (empty) | SMTP password. Required for PIN email authentication. |
+| `SMTP_USE_TLS` | `true` | Whether to use TLS for SMTP connections. |
+| `USER_DOMAIN` | `example.com` | Email domain appended to user ID for PIN emails (e.g., `userid@zayeduniversity.ae`). |
+| `PIN_EXPIRATION_MINUTES` | `15` | PIN validity duration in minutes. |
 
 Set these in `docker-compose.yml` (under `backend.environment`) or as shell environment variables for local development.
 
@@ -396,9 +403,26 @@ Set these in `docker-compose.yml` (under `backend.environment`) or as shell envi
 
 ## Authentication & Security
 
-- All routes except `/admin/setup`, `/admin/login`, and `/login` require a valid JWT.
+### Login Methods
+
+ConduVet supports two authentication methods:
+
+1. **PIN-Based Email Authentication (Primary)**
+   - Users enter their User ID on the login page
+   - A random 5-digit PIN is sent to `{userid}@{USER_DOMAIN}`
+   - Users enter the PIN to log in
+   - PINs expire after `PIN_EXPIRATION_MINUTES` (default: 15 minutes)
+   - Requires SMTP configuration (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, USER_DOMAIN)
+
+2. **Password Authentication (Fallback)**
+   - Traditional username/password login available as fallback
+   - Click "Use Password" on the login page to switch to password mode
+   - Passwords are stored as bcrypt hashes; plaintext is never persisted
+
+### General Security
+
+- All routes except `/admin/setup`, `/admin/login`, and `/api/auth/*` require a valid JWT.
 - User and admin tokens expire after **8 hours**.
-- Passwords are stored as **bcrypt hashes**; plaintext is never persisted.
 - The authentication logic is behind a pluggable `AuthProvider` interface (`backend/auth/ldap_stub.py`). The default implementation checks bcrypt hashes against the database. To switch to LDAP or SAML, implement the provider interface — no other code needs to change.
 - **Rate limiting** is applied to login endpoints via slowapi to prevent brute-force attacks.
 

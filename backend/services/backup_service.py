@@ -31,6 +31,7 @@ def setup_backup_scheduler(app):
     Attach a BackgroundScheduler to the FastAPI app lifecycle.
 
     Runs every BACKUP_INTERVAL_HOURS hours; backs up every active data file.
+    Also runs PIN cleanup every 15 minutes.
     """
     global _scheduler
 
@@ -40,6 +41,18 @@ def setup_backup_scheduler(app):
         trigger=IntervalTrigger(hours=BACKUP_INTERVAL_HOURS),
         id="backup_all_files",
         name="Backup all active data files",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+    # Add PIN cleanup job
+    from main import _cleanup_expired_pins
+
+    _scheduler.add_job(
+        _cleanup_expired_pins,
+        trigger=IntervalTrigger(minutes=15),
+        id="cleanup_expired_pins",
+        name="Clean up expired email verification PINs",
         replace_existing=True,
         max_instances=1,
     )

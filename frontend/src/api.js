@@ -137,6 +137,16 @@ export async function userLogin(username, password) {
   return res.data
 }
 
+export async function requestPIN(userid) {
+  const res = await axios.post('/api/auth/request-pin', { userid })
+  return res.data
+}
+
+export async function verifyPIN(userid, pinCode) {
+  const res = await axios.post('/api/auth/verify-pin', { userid, pin_code: pinCode })
+  return res.data
+}
+
 // ── Admin – Files ─────────────────────────────────────────────────────────────
 
 export async function getAdminFiles() {

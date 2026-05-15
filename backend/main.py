@@ -4,6 +4,8 @@ ConduVet — FastAPI application entry point.
 
 import logging
 import os
+from datetime import datetime, timezone
+from typing import Dict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -23,6 +25,24 @@ from routers.admin import router as admin_router
 from routers.auth import router as auth_router
 from routers.data import router as data_router
 from services.backup_service import setup_backup_scheduler
+
+# ---------------------------------------------------------------------------
+# In-memory PIN storage for email authentication
+# Structure: {userid: {pin: str, expires_at: datetime, email: str}}
+# ---------------------------------------------------------------------------
+_pin_store: Dict[str, dict] = {}
+
+
+def _cleanup_expired_pins():
+    """Remove expired PIN records from memory."""
+    now = datetime.now(timezone.utc)
+    expired_users = [
+        userid for userid, data in _pin_store.items()
+        if data["expires_at"] <= now
+    ]
+    for userid in expired_users:
+        del _pin_store[userid]
+
 
 # ---------------------------------------------------------------------------
 # Create all tables
@@ -176,6 +196,17 @@ def _run_migrations():
 
 
 _run_migrations()
+
+# ---------------------------------------------------------------------------
+# PIN Authentication Configuration
+# ---------------------------------------------------------------------------
+SMTP_HOST = os.getenv("SMTP_HOST", "localhost")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+USER_DOMAIN = os.getenv("USER_DOMAIN", "example.com")
+PIN_EXPIRATION_MINUTES = int(os.getenv("PIN_EXPIRATION_MINUTES", "15"))
 
 # ---------------------------------------------------------------------------
 # App

@@ -105,9 +105,9 @@ async def request_pin(
             detail="Application not configured",
         )
 
-    user_domain = os.getenv("USER_DOMAIN", config.smtp_config.get("user_domain", "example.com"))
+    user_domain = os.getenv("USER_DOMAIN", config.user_domain or "example.com")
     pin_expiration_minutes = int(
-        os.getenv("PIN_EXPIRATION_MINUTES", config.smtp_config.get("pin_expiration_minutes", "15"))
+        os.getenv("PIN_EXPIRATION_MINUTES", str(config.pin_expiration_minutes or 15))
     )
 
     # Generate random 5-digit PIN

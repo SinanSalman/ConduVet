@@ -187,36 +187,83 @@ admin_pass: "choose-a-strong-password"
 backup_dir: "./backups"
 auto_logout_minutes: 30
 
-# SMTP configuration for PIN-based email authentication
+# PIN authentication settings
+user_domain: "zayeduniversity.ae"   # Email domain for PIN emails (userid@domain)
+pin_expiration_minutes: 15          # How long PINs remain valid (in minutes)
+
+# SMTP configuration for PIN email delivery
 smtp_config:
-  host: "smtp.gmail.com"           # SMTP server hostname
-  port: 587                         # SMTP server port
-  username: "your-email@gmail.com"  # SMTP username
-  password: "your-app-password"     # SMTP password
-  user_domain: "example.com"        # Email domain for PINs (e.g., userid@example.com)
-  use_tls: true                     # Use TLS for connection (default: true)
-  pin_expiration_minutes: 15        # PIN validity in minutes (default: 15)
+  host: "smtp.gmail.com"           # SMTP server hostname (required)
+  port: 587                         # SMTP server port (required)
+  username: "your-email@gmail.com"  # SMTP username (required)
+  password: "your-app-password"     # SMTP password (required)
+  use_tls: true                     # Use TLS for connection (optional, default: true)
 ```
 
-| Key | Description | Required |
-|---|---|---|
-| `title` | Shown in the header. | ✓ |
-| `admin_account` | Username for the admin login at `/admin/login`. | ✓ |
-| `admin_pass` | Admin password. Stored as a bcrypt hash. | ✓ |
-| `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. | ✓ |
-| `auto_logout_minutes` | Inactivity timeout in minutes (default: 30, range: 1–480). | optional |
-| `smtp_config` | Email configuration for PIN authentication. See below. | optional* |
+| Key | Description | Required | Default |
+|---|---|---|---|
+| `title` | Shown in the header. | ✓ | — |
+| `admin_account` | Username for the admin login at `/admin/login`. | ✓ | — |
+| `admin_pass` | Admin password. Stored as a bcrypt hash. | ✓ | — |
+| `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. | ✓ | — |
+| `auto_logout_minutes` | Inactivity timeout in minutes (range: 1–480). | optional | 30 |
+| `user_domain` | Email domain for PIN emails (e.g., `userid@zayeduniversity.ae`). | optional | `example.com` |
+| `pin_expiration_minutes` | How long PINs remain valid (range: 1–1440 minutes). | optional | 15 |
+| `smtp_config` | Email server configuration for PIN delivery. See below. | optional* | {} |
 
-**SMTP Configuration Details:**
-- `host` — SMTP server hostname (e.g., `smtp.gmail.com`, `smtp.office365.com`)
-- `port` — SMTP server port (typically 587 for TLS, 465 for SSL)
-- `username` — SMTP username/sender email
-- `password` — SMTP password (use Gmail app passwords for Gmail accounts)
-- `user_domain` — Domain appended to user ID for PIN emails (e.g., `userid@zayeduniversity.ae`)
-- `use_tls` — Use TLS encryption (default: true)
-- `pin_expiration_minutes` — How long PINs remain valid (default: 15)
+**SMTP Configuration Details (`smtp_config` section):**
+- `host` — SMTP server hostname (e.g., `smtp.gmail.com`, `smtp.office365.com`) — **required**
+- `port` — SMTP server port (typically 587 for TLS, 465 for SSL) — **required**
+- `username` — SMTP username/sender email — **required**
+- `password` — SMTP password (use Gmail app passwords for Gmail accounts) — **required**
+- `use_tls` — Use TLS encryption (optional, default: `true`)
 
 **Note:** `smtp_config` is required if you want PIN-based email authentication. If omitted, only password authentication will work.
+
+**Example Configurations:**
+
+*Gmail with App Password:*
+```yaml
+title: "My Instance"
+admin_account: "admin"
+admin_pass: "strong-password"
+backup_dir: "./backups"
+user_domain: "zayeduniversity.ae"
+pin_expiration_minutes: 15
+
+smtp_config:
+  host: "smtp.gmail.com"
+  port: 587
+  username: "your-email@gmail.com"
+  password: "xxxx xxxx xxxx xxxx"  # 16-char app password from Google Account
+  use_tls: true
+```
+
+*Office 365:*
+```yaml
+user_domain: "company.ae"
+pin_expiration_minutes: 20
+
+smtp_config:
+  host: "smtp.office365.com"
+  port: 587
+  username: "your-email@company.com"
+  password: "your-password"
+  use_tls: true
+```
+
+*Custom SMTP Server:*
+```yaml
+user_domain: "yourdomain.com"
+pin_expiration_minutes: 10
+
+smtp_config:
+  host: "mail.yourdomain.com"
+  port: 25
+  username: "noreply@yourdomain.com"
+  password: "server-password"
+  use_tls: false
+```
 
 ### 2. Prepare `users.csv`
 
@@ -426,10 +473,10 @@ ConduVet supports two authentication methods:
 
 1. **PIN-Based Email Authentication (Primary)**
    - Users enter their User ID on the login page
-   - A random 5-digit PIN is sent to `{userid}@{USER_DOMAIN}`
+   - A random 5-digit PIN is sent to `{userid}@{user_domain}` (configured in config.yaml)
    - Users enter the PIN to log in
-   - PINs expire after `PIN_EXPIRATION_MINUTES` (default: 15 minutes)
-   - Requires SMTP configuration (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, USER_DOMAIN)
+   - PINs expire after `pin_expiration_minutes` (default: 15 minutes, configured in config.yaml)
+   - Requires SMTP configuration in `config.yaml` under `smtp_config` section
 
 2. **Password Authentication (Fallback)**
    - Traditional username/password login available as fallback

@@ -112,6 +112,35 @@ def _validate_yaml(content: bytes) -> dict:
         # Set default if not specified
         data["auto_logout_minutes"] = 30
 
+    # Validate optional user_domain
+    if "user_domain" in data:
+        user_domain = data["user_domain"]
+        if not isinstance(user_domain, str) or not user_domain.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"user_domain must be a non-empty string. "
+                    f"Example: user_domain: \"zayeduniversity.ae\""
+                ),
+            )
+        data["user_domain"] = user_domain.strip()
+    else:
+        data["user_domain"] = "example.com"
+
+    # Validate optional pin_expiration_minutes
+    if "pin_expiration_minutes" in data:
+        expiry = data["pin_expiration_minutes"]
+        if not isinstance(expiry, int) or expiry < 1 or expiry > 1440:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"pin_expiration_minutes must be an integer between 1 and 1440 (minutes). "
+                    f"Got: {expiry}. This controls how long PINs remain valid."
+                ),
+            )
+    else:
+        data["pin_expiration_minutes"] = 15
+
     # Validate optional smtp_config
     if "smtp_config" in data:
         smtp = data["smtp_config"]
@@ -127,13 +156,11 @@ def _validate_yaml(content: bytes) -> dict:
                     f"    port: 587\n"
                     f"    username: \"your-email@gmail.com\"\n"
                     f"    password: \"your-app-password\"\n"
-                    f"    use_tls: true\n"
-                    f"    user_domain: \"example.com\"\n"
-                    f"    pin_expiration_minutes: 15"
+                    f"    use_tls: true"
                 ),
             )
-        # Validate smtp_config fields
-        required_smtp_fields = {"host", "port", "username", "password", "user_domain"}
+        # Validate smtp_config fields (only SMTP-specific, not user_domain/expiry)
+        required_smtp_fields = {"host", "port", "username", "password"}
         provided_fields = set(smtp.keys())
         if not required_smtp_fields.issubset(provided_fields):
             missing = required_smtp_fields - provided_fields
@@ -147,8 +174,7 @@ def _validate_yaml(content: bytes) -> dict:
                     f"  port: 587\n"
                     f"  username: \"your-email@gmail.com\"\n"
                     f"  password: \"your-app-password\"\n"
-                    f"  user_domain: \"example.com\"\n"
-                    f"Optional: use_tls: true, pin_expiration_minutes: 15"
+                    f"Optional: use_tls: true"
                 ),
             )
         # Validate port is integer
@@ -163,8 +189,6 @@ def _validate_yaml(content: bytes) -> dict:
         # Set defaults for optional fields
         if "use_tls" not in smtp:
             smtp["use_tls"] = True
-        if "pin_expiration_minutes" not in smtp:
-            smtp["pin_expiration_minutes"] = 15
     else:
         # No SMTP config provided — set empty dict as default
         data["smtp_config"] = {}
@@ -271,6 +295,8 @@ async def setup(
         users_file_path=users_file_path,
         backup_dir=backup_dir,
         auto_logout_minutes=config_data.get("auto_logout_minutes", 30),
+        user_domain=config_data.get("user_domain", "example.com"),
+        pin_expiration_minutes=config_data.get("pin_expiration_minutes", 15),
         smtp_config=config_data.get("smtp_config", {}),
     )
     db.add(app_config)
@@ -339,6 +365,8 @@ def get_config(
         "users_file_path": config.users_file_path,
         "backup_dir": config.backup_dir,
         "auto_logout_minutes": config.auto_logout_minutes,
+        "user_domain": config.user_domain or "example.com",
+        "pin_expiration_minutes": config.pin_expiration_minutes or 15,
         "smtp_config": config.smtp_config or {},
         "created_at": config.created_at.isoformat() if config.created_at else None,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
@@ -368,6 +396,10 @@ async def update_config_yaml(
     config.admin_pass_hash = pwd_context.hash(str(config_data["admin_pass"]))
     if "auto_logout_minutes" in config_data:
         config.auto_logout_minutes = config_data["auto_logout_minutes"]
+    if "user_domain" in config_data:
+        config.user_domain = config_data["user_domain"]
+    if "pin_expiration_minutes" in config_data:
+        config.pin_expiration_minutes = config_data["pin_expiration_minutes"]
     if "smtp_config" in config_data:
         config.smtp_config = config_data["smtp_config"]
 
@@ -380,6 +412,8 @@ async def update_config_yaml(
         "title": config.title,
         "admin_account": config.admin_account,
         "auto_logout_minutes": config.auto_logout_minutes,
+        "user_domain": config.user_domain or "example.com",
+        "pin_expiration_minutes": config.pin_expiration_minutes or 15,
         "smtp_config": config.smtp_config or {},
     }
 

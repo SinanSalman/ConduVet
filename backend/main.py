@@ -207,6 +207,22 @@ def _run_migrations():
             )
             conn.commit()
 
+        # Migration 007: add user_domain and pin_expiration_minutes to app_config
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'app_config' AND column_name = 'user_domain'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE app_config ADD COLUMN user_domain VARCHAR(255) NOT NULL DEFAULT 'example.com'")
+            )
+            conn.execute(
+                text("ALTER TABLE app_config ADD COLUMN pin_expiration_minutes INTEGER NOT NULL DEFAULT 15")
+            )
+            conn.commit()
+
 
 _run_migrations()
 

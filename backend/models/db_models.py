@@ -18,6 +18,8 @@ class AppConfig(Base):
     users_file_path: Mapped[str] = mapped_column(String(1024), nullable=True)
     backup_dir: Mapped[str] = mapped_column(String(1024), nullable=True)
     auto_logout_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    user_domain: Mapped[str] = mapped_column(String(255), nullable=False, default="example.com")
+    pin_expiration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     smtp_config: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

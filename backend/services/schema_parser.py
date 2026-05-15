@@ -4,7 +4,120 @@ Schema parsing, depends_on evaluation, and cell validation.
 
 import re
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Date format parsing
+# ---------------------------------------------------------------------------
+
+def parse_date_format(format_str: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Parse a flexible date format string and return (strptime_format, display_format).
+
+    Supported components: dd, mm, yyyy, HH, MM, SS (case-insensitive)
+    Supported separators: /, :, -, ., space
+
+    Rules for MM disambiguation:
+      - If preceded by HH or followed by SS, it's minutes (%M)
+      - Otherwise, it's month (%m)
+      - If format contains HH, MM is assumed to be minutes
+
+    Examples:
+      "DD/MM/YYYY" -> ("%d/%m/%Y", "DD/MM/YYYY")
+      "DD-MM-YYYY HH:MM:SS" -> ("%d-%m-%Y %H:%M:%S", "DD-MM-YYYY HH:MM:SS")
+      "YYYY.MM.DD" -> ("%Y.%m.%d", "YYYY.MM.DD")
+
+    Returns (None, None) if format is invalid.
+    """
+    if not format_str:
+        return None, None
+
+    fmt = format_str.strip()
+
+    # First pass: check if format contains HH (to determine MM context)
+    has_hour = "HH" in fmt.upper()
+
+    # Build the format string by parsing components
+    strptime_fmt = ""
+    display_fmt = ""
+    i = 0
+
+    while i < len(fmt):
+        # Try to match a component
+        matched = False
+
+        # Check for "dd" or "DD"
+        if fmt[i:i+2].lower() == "dd":
+            strptime_fmt += "%d"
+            display_fmt += fmt[i:i+2]  # preserve case
+            i += 2
+            matched = True
+        # Check for "mm" or "MM" (need to distinguish from HH:MM - look at context)
+        elif fmt[i:i+2].lower() == "mm":
+            # Heuristic:
+            #   1. If format has HH component, MM is minutes
+            #   2. If preceded by "hh" or followed by "ss", it's minutes
+            #   3. Otherwise, it's month
+            is_minutes = has_hour
+            if not is_minutes and i >= 2 and fmt[i-2:i].lower() == "hh":
+                is_minutes = True
+            if not is_minutes and i + 2 < len(fmt) and fmt[i+2:i+4].lower() == "ss":
+                is_minutes = True
+            # If preceded by `:` and followed by `:`, likely minutes
+            if not is_minutes and i > 0 and i + 2 < len(fmt):
+                if fmt[i-1] in ":- " and fmt[i+2] in ":- ":
+                    is_minutes = True
+
+            strptime_fmt += "%M" if is_minutes else "%m"
+            display_fmt += fmt[i:i+2]  # preserve case
+            i += 2
+            matched = True
+        # Check for "yyyy" or "YYYY"
+        elif fmt[i:i+4].lower() == "yyyy":
+            strptime_fmt += "%Y"
+            display_fmt += fmt[i:i+4]  # preserve case
+            i += 4
+            matched = True
+        # Check for "hh" or "HH"
+        elif fmt[i:i+2].lower() == "hh":
+            strptime_fmt += "%H"
+            display_fmt += fmt[i:i+2]  # preserve case
+            i += 2
+            matched = True
+        # Check for "ss" or "SS"
+        elif fmt[i:i+2].lower() == "ss":
+            strptime_fmt += "%S"
+            display_fmt += fmt[i:i+2]  # preserve case
+            i += 2
+            matched = True
+
+        if not matched:
+            # Must be a separator or invalid character
+            char = fmt[i]
+            if char in "/:-.  ":  # space also allowed
+                strptime_fmt += char
+                display_fmt += char
+                i += 1
+            else:
+                # Invalid character in format
+                return None, None
+
+    return strptime_fmt, display_fmt
+
+
+def validate_date_format(value: str, strptime_fmt: str) -> bool:
+    """
+    Validate that a date string matches the expected format.
+    Returns True if valid, False otherwise.
+    """
+    if not value or not strptime_fmt:
+        return False
+    try:
+        datetime.strptime(value.strip(), strptime_fmt)
+        return True
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -16,13 +129,16 @@ def parse_data_type(data_type: str) -> dict:
     Parse a schema data-type string into a structured dict.
 
     Supported patterns (case-insensitive):
-      Text (n)                  -> type=text,     max_length=n
-      Number (a,b)              -> type=number,   min=a, max=b
-      Multiple (a,b,c,...)      -> type=multiple, options=[a,b,c,...]
-      List (a,b,c,...)          -> type=list,     options=[a,b,c,...]
-      Date (DD/MM/YYYY)         -> type=date
-      Date (DD/MM/YYYY HH:MM:SS)-> type=datetime
-      Boolean / Bool            -> type=boolean
+      Text (n)                          -> type=text,     max_length=n
+      Number (a,b)                      -> type=number,   min=a, max=b
+      Multiple (a,b,c,...)              -> type=multiple, options=[a,b,c,...]
+      List (a,b,c,...)                  -> type=list,     options=[a,b,c,...]
+      Date (DD/MM/YYYY)                 -> type=date,     date_format="DD/MM/YYYY"
+      Date (DD-MM-YYYY HH:MM:SS)        -> type=datetime, date_format="DD-MM-YYYY HH:MM:SS"
+      Boolean / Bool                    -> type=boolean
+
+    Date format string may use any combination of: dd, mm, yyyy, HH, MM, SS
+    with separators: /, :, -, ., or space
 
     Returns:
       {
@@ -31,6 +147,7 @@ def parse_data_type(data_type: str) -> dict:
         "min": float | None,
         "max": float | None,
         "options": list | None,
+        "date_format": str | None,  # For date/datetime types
       }
     """
     result = {
@@ -39,6 +156,7 @@ def parse_data_type(data_type: str) -> dict:
         "min": None,
         "max": None,
         "options": None,
+        "date_format": None,
     }
 
     if not data_type:
@@ -47,12 +165,15 @@ def parse_data_type(data_type: str) -> dict:
     s = data_type.strip()
 
     # Date / Datetime — must come before generic Text check
-    date_match = re.match(
-        r"^Date\s*\(\s*DD/MM/YYYY(\s+HH:MM:SS)?\s*\)$", s, re.IGNORECASE
-    )
+    # Match "Date ( ... )" with flexible format inside
+    date_match = re.match(r"^Date\s*\(\s*(.+?)\s*\)$", s, re.IGNORECASE)
     if date_match:
-        result["type"] = "datetime" if date_match.group(1) else "date"
-        return result
+        format_str = date_match.group(1).strip()
+        strptime_fmt, display_fmt = parse_date_format(format_str)
+        if strptime_fmt:  # Valid format
+            result["type"] = "datetime" if (" " in format_str or "HH" in format_str.upper()) else "date"
+            result["date_format"] = format_str
+            return result
 
     # Text (n)
     text_match = re.match(r"^Text\s*\(\s*(\d+)\s*\)$", s, re.IGNORECASE)
@@ -281,41 +402,64 @@ def validate_cell(
                 )
 
     elif dtype == "date":
-        # Accept ISO 8601 (YYYY-MM-DD) or DD/MM/YYYY
         str_val = str(value).strip()
-        parsed_ok = False
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
-            try:
-                datetime.strptime(str_val, fmt)
-                parsed_ok = True
-                break
-            except ValueError:
-                pass
-        if not parsed_ok:
-            return (
-                f"'{field_name}': '{value}' is not a valid date. "
-                f"Use DD/MM/YYYY format (e.g. 31/12/2024)."
-            )
+        date_format = _get("date_format", None)
+
+        if date_format:
+            # Use the flexible date format from schema
+            strptime_fmt, _ = parse_date_format(date_format)
+            if strptime_fmt and not validate_date_format(str_val, strptime_fmt):
+                return (
+                    f"'{field_name}': '{value}' is not a valid date. "
+                    f"Use {date_format} format (e.g. for {date_format}, a valid date would be like 31/12/2024)."
+                )
+        else:
+            # Fallback: Accept ISO 8601 (YYYY-MM-DD) or DD/MM/YYYY
+            parsed_ok = False
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    datetime.strptime(str_val, fmt)
+                    parsed_ok = True
+                    break
+                except ValueError:
+                    pass
+            if not parsed_ok:
+                return (
+                    f"'{field_name}': '{value}' is not a valid date. "
+                    f"Use DD/MM/YYYY format (e.g. 31/12/2024)."
+                )
 
     elif dtype == "datetime":
         str_val = str(value).strip()
-        parsed_ok = False
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%d/%m/%Y %H:%M:%S",
-        ):
-            try:
-                datetime.strptime(str_val, fmt)
-                parsed_ok = True
-                break
-            except ValueError:
-                pass
-        if not parsed_ok:
-            return (
-                f"'{field_name}': '{value}' is not a valid date and time. "
-                f"Use DD/MM/YYYY HH:MM:SS format (e.g. 31/12/2024 14:30:00)."
-            )
+        date_format = _get("date_format", None)
+
+        if date_format:
+            # Use the flexible date format from schema
+            strptime_fmt, _ = parse_date_format(date_format)
+            if strptime_fmt and not validate_date_format(str_val, strptime_fmt):
+                return (
+                    f"'{field_name}': '{value}' is not a valid date and time. "
+                    f"Use {date_format} format (e.g. 31/12/2024 14:30:00)."
+                )
+        else:
+            # Fallback: Accept common datetime formats
+            parsed_ok = False
+            for fmt in (
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S",
+                "%d/%m/%Y %H:%M:%S",
+            ):
+                try:
+                    datetime.strptime(str_val, fmt)
+                    parsed_ok = True
+                    break
+                except ValueError:
+                    pass
+            if not parsed_ok:
+                return (
+                    f"'{field_name}': '{value}' is not a valid date and time. "
+                    f"Use DD/MM/YYYY HH:MM:SS format (e.g. 31/12/2024 14:30:00)."
+                )
 
     elif dtype == "boolean":
         # Accept Python bools, or strings that resemble booleans

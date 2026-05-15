@@ -365,6 +365,13 @@ def submit_records(
             # the backend will restore the existing value, so the submitted one is ignored.
             if field_name.lower() in _VETTING_STATUS_FIELDS and not is_vetter:
                 continue
+
+            # Skip validation for protected fields on existing records (after submission).
+            # Protected fields are validated at entry time, but once submitted on existing
+            # records, they become read-only and don't need re-validation.
+            if record is not None and schema_def.is_protected and not is_vetter:
+                continue
+
             value = data.get(field_name)
             error = validate_cell(value, schema_def, data)
             if error:

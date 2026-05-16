@@ -134,7 +134,9 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         // Field-level protection: owner cannot edit protected fields on existing records
         // (but CAN edit protected fields on newly created records)
         const isNewRecord = newRecordIds.has(params.data?.id)
-        if (field.is_protected && !isNewRecord && !isAdmin) {
+        // Convert is_protected to boolean in case it comes as a string from API
+        const isProtected = field.is_protected === true || field.is_protected === 'true' || field.is_protected === 1
+        if (isProtected && !isNewRecord && !isAdmin) {
           return false
         }
         return true
@@ -148,7 +150,9 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         }
         // Visual indicator for protected fields on existing records
         const isNewRecord = newRecordIds.has(params.data?.id)
-        if (field.is_protected && !isNewRecord && !isAdmin) {
+        // Convert is_protected to boolean in case it comes as a string from API
+        const isProtected = field.is_protected === true || field.is_protected === 'true' || field.is_protected === 1
+        if (isProtected && !isNewRecord && !isAdmin) {
           return {
             backgroundColor: '#fef3c7',  // Light yellow/amber
             color: '#b45309',             // Darker amber text

@@ -124,7 +124,7 @@ export default function ContextPanel({ fileId, focusedCell, schema, isAdmin, rec
         )}
 
         {/* Protection status */}
-        {fieldDef?.is_protected && !isNewRecord && !isAdmin && (
+        {fieldDef && (fieldDef.is_protected === true || fieldDef.is_protected === 'true' || fieldDef.is_protected === 1) && !isNewRecord && !isAdmin && (
           <div className="bg-amber-50 border border-amber-300 rounded p-2 mb-3">
             <p className="text-amber-700 font-semibold text-xs">
               🔒 Protected Field

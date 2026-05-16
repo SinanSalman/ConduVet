@@ -18,9 +18,6 @@ from models.db_models import AppUser, AppConfig
 from rate_limiter import limiter
 from services.email_service import send_pin_email
 
-# Import PIN store from main
-from main import _pin_store, send_email
-
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -87,6 +84,9 @@ async def request_pin(
     Validates that the user exists, generates a random 5-digit PIN,
     stores it in memory with expiration, and sends it via email.
     """
+    # Lazy import to avoid circular import
+    from main import _pin_store, send_email
+
     userid = body.userid.upper()
 
     # Validate user exists
@@ -157,6 +157,9 @@ async def verify_pin(
     Checks that the PIN exists, is not expired, and matches the provided code.
     Deletes the PIN from memory on successful verification.
     """
+    # Lazy import to avoid circular import
+    from main import _pin_store
+
     userid = body.userid.upper()
     pin_code = body.pin_code.strip()
 

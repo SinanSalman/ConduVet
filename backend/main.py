@@ -307,6 +307,17 @@ def _run_migrations():
             )
             conn.commit()
 
+        # Migration 010: expand schema_definitions.data_type from VARCHAR(512) to TEXT
+        # (some data types like long List() with many options exceed 512 chars)
+        try:
+            conn.execute(
+                text("ALTER TABLE schema_definitions ALTER COLUMN data_type TYPE TEXT")
+            )
+            conn.commit()
+        except Exception:
+            # Column may already be TEXT or error is benign
+            conn.rollback()
+
 
 _run_migrations()
 

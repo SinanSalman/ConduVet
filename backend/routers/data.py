@@ -144,6 +144,7 @@ def get_schema(
                 "sample_data": s.sample_data,
                 "depends_on": s.depends_on,
                 "accept_null": s.accept_null,
+                "is_protected": s.is_protected,
                 "field_order": s.field_order,
             }
             for s in schemas

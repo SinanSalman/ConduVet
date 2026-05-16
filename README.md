@@ -188,7 +188,7 @@ backup_dir: "./backups"
 auto_logout_minutes: 30
 
 # PIN authentication settings
-user_domain: "zayeduniversity.ae"   # Email domain for PIN emails (userid@domain)
+user_domain: "example.com"   # Email domain for PIN emails (userid@domain)
 pin_expiration_minutes: 15          # How long PINs remain valid (in minutes)
 
 # SMTP configuration for PIN email delivery
@@ -207,7 +207,7 @@ smtp_config:
 | `admin_pass` | Admin password. Stored as a bcrypt hash. | ✓ | — |
 | `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. | ✓ | — |
 | `auto_logout_minutes` | Inactivity timeout in minutes (range: 1–480). | optional | 30 |
-| `user_domain` | Email domain for PIN emails (e.g., `userid@zayeduniversity.ae`). | optional | `example.com` |
+| `user_domain` | Email domain for PIN emails (e.g., `userid@example.com`). | optional | `example.com` |
 | `pin_expiration_minutes` | How long PINs remain valid (range: 1–1440 minutes). | optional | 15 |
 | `smtp_config` | Email server configuration for PIN delivery. See below. | optional* | {} |
 
@@ -228,7 +228,7 @@ title: "My Instance"
 admin_account: "admin"
 admin_pass: "strong-password"
 backup_dir: "./backups"
-user_domain: "zayeduniversity.ae"
+user_domain: "example.com"
 pin_expiration_minutes: 15
 
 smtp_config:

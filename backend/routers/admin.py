@@ -120,7 +120,7 @@ def _validate_yaml(content: bytes) -> dict:
                 status_code=400,
                 detail=(
                     f"user_domain must be a non-empty string. "
-                    f"Example: user_domain: \"zayeduniversity.ae\""
+                    f"Example: user_domain: \"example.com\""
                 ),
             )
         data["user_domain"] = user_domain.strip()

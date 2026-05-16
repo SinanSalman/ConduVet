@@ -18,7 +18,7 @@ import {
   getFileLocks,
   deleteRecord,
 } from '../api'
-import { parseDataType, validateCell, formatDate, formatDateTime, renderUrlsAsLinks, normalizeDateString, toBoolean } from '../utils/schemaHelpers.jsx'
+import { parseDataType, validateCell, formatDate, formatDateTime, formatDateByFormat, renderUrlsAsLinks, normalizeDateString, toBoolean } from '../utils/schemaHelpers.jsx'
 import ContextPanel from '../components/ContextPanel'
 
 ModuleRegistry.registerModules([ClientSideRowModelModule])
@@ -224,10 +224,20 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       }
     } else if (parsed.type === 'date') {
       col.cellEditor = 'agTextCellEditor'
-      col.valueFormatter = params => formatDate(params.value)
+      col.valueFormatter = params => {
+        // Use custom format if available, otherwise fall back to default
+        return parsed.date_format
+          ? formatDateByFormat(params.value, parsed.date_format)
+          : formatDate(params.value)
+      }
     } else if (parsed.type === 'datetime') {
       col.cellEditor = 'agTextCellEditor'
-      col.valueFormatter = params => formatDateTime(params.value)
+      col.valueFormatter = params => {
+        // Use custom format if available, otherwise fall back to default
+        return parsed.date_format
+          ? formatDateByFormat(params.value, parsed.date_format)
+          : formatDateTime(params.value)
+      }
     } else {
       col.cellEditor = 'agTextCellEditor'
       if (parsed.max_length) {

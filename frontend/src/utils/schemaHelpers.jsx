@@ -6,21 +6,23 @@
  *   Number (a,b)                  → { type: 'number', min: a, max: b }
  *   List (a,b,c,...)              → { type: 'list', options: [...] }
  *   Multiple (a,b,c,...)          → { type: 'multiple', options: [...] }
- *   Date (DD/MM/YYYY)             → { type: 'date' }
- *   Date (DD/MM/YYYY HH:MM:SS)    → { type: 'datetime' }
+ *   Date (DD/MM/YYYY)             → { type: 'date', date_format: 'DD/MM/YYYY' }
+ *   Date (DD/MM/YYYY HH:MM:SS)    → { type: 'datetime', date_format: 'DD/MM/YYYY HH:MM:SS' }
  *   Boolean / Bool                → { type: 'boolean' }
  */
 export function parseDataType(dataType) {
   if (!dataType) return { type: 'text' }
   const raw = dataType.trim()
 
-  // Date (DD/MM/YYYY HH:MM:SS) — must be tested before the plain date pattern
-  if (/^date\s*\(\s*DD\/MM\/YYYY\s+HH:MM:SS\s*\)$/i.test(raw)) {
-    return { type: 'datetime' }
-  }
-  // Date (DD/MM/YYYY)
-  if (/^date\s*\(\s*DD\/MM\/YYYY\s*\)$/i.test(raw)) {
-    return { type: 'date' }
+  // Date with custom format — match "Date ( ... )" with flexible format
+  const dateMatch = raw.match(/^date\s*\(\s*(.+?)\s*\)$/i)
+  if (dateMatch) {
+    const formatStr = dateMatch[1].trim()
+    const isDatetime = /\s/.test(formatStr) || /HH/i.test(formatStr)
+    return {
+      type: isDatetime ? 'datetime' : 'date',
+      date_format: formatStr
+    }
   }
   // Text (n)
   const textMatch = raw.match(/^text\s*\(\s*(\d+)\s*\)$/i)
@@ -246,6 +248,54 @@ export function normalizeDateString(dateStr) {
 
   // Return as-is if it doesn't match our patterns
   return dateStr
+}
+
+/**
+ * Format a date according to a custom format string.
+ *
+ * Format string uses: DD, MM, YYYY, HH, MM, SS (case-insensitive)
+ * Separators: /, :, -, ., space
+ *
+ * @param {Date|string} value - Date object or ISO date string
+ * @param {string} formatStr - Format string (e.g., "DD/MM/YYYY", "YYYY-MM-DD HH:MM:SS")
+ * @returns {string} - Formatted date string
+ */
+export function formatDateByFormat(value, formatStr) {
+  if (!value || !formatStr) return String(value || '')
+
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return String(value)
+
+  // Extract components from date
+  const day    = String(d.getDate()).padStart(2, '0')
+  const month  = String(d.getMonth() + 1).padStart(2, '0')
+  const year   = String(d.getFullYear())
+  const hours  = String(d.getHours()).padStart(2, '0')
+  const mins   = String(d.getMinutes()).padStart(2, '0')
+  const secs   = String(d.getSeconds()).padStart(2, '0')
+
+  // Map the format string tokens to date components
+  // Process in order of longest to shortest to avoid partial replacements
+  let result = formatStr
+
+  // Case-insensitive replacements
+  result = result.replace(/YYYY/gi, year)
+  result = result.replace(/DD/gi, day)
+  result = result.replace(/MM/gi, match => {
+    // Check if this MM is part of HH:MM:SS (minutes) or DD/MM/YYYY (month)
+    // Simple heuristic: if surrounded by colons or after HH, it's minutes
+    const idx = result.indexOf(match)
+    const before = result.substring(Math.max(0, idx - 3), idx).toUpperCase()
+    const after = result.substring(idx + 2, Math.min(result.length, idx + 5)).toUpperCase()
+    if (before.includes('HH') || after.includes('SS') || before.includes(':') || after.includes(':')) {
+      return mins  // minutes
+    }
+    return month  // month
+  })
+  result = result.replace(/HH/gi, hours)
+  result = result.replace(/SS/gi, secs)
+
+  return result
 }
 
 /**

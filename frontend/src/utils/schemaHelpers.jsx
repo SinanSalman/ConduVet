@@ -88,6 +88,53 @@ function parseDependsOn(dependsOn) {
 }
 
 /**
+ * Generate an example date string for the given format.
+ * Used in validation error messages to show the expected format.
+ */
+function getExampleDate(formatStr) {
+  if (!formatStr) return '1/1/2024'
+
+  // Use example date: January 15, 2024
+  const day = '15'
+  const month = '01'
+  const year = '2024'
+
+  let example = formatStr
+    .replace(/DD/gi, day)
+    .replace(/MM/gi, month)
+    .replace(/YYYY/gi, year)
+    .replace(/YY/gi, '24')
+
+  return example
+}
+
+/**
+ * Generate an example datetime string for the given format.
+ * Used in validation error messages to show the expected format.
+ */
+function getExampleDateTime(formatStr) {
+  if (!formatStr) return '1/1/2024 14:30:00'
+
+  // Use example datetime: January 15, 2024 14:30:45
+  const day = '15'
+  const month = '01'
+  const year = '2024'
+  const hours = '14'
+  const mins = '30'
+  const secs = '45'
+
+  let example = formatStr
+    .replace(/DD/gi, day)
+    .replace(/MM/gi, month)
+    .replace(/YYYY/gi, year)
+    .replace(/YY/gi, '24')
+    .replace(/HH/gi, hours)
+    .replace(/SS/gi, secs)
+
+  return example
+}
+
+/**
  * Validate a single cell value against its field definition.
  *
  * @param {*}      value    — current cell value
@@ -177,20 +224,77 @@ export function validateCell(value, fieldDef, rowData) {
   }
 
   if (parsed.type === 'date') {
-    // Accept DD/MM/YYYY (with optional leading zeros: 1/1/2024 or 01/01/2024) or YYYY-MM-DD formats
-    const ddmmyyyy = /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(value))
-    const yyyymmdd = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !isNaN(new Date(value).getTime())
-    if (!ddmmyyyy && !yyyymmdd) {
-      return `"${fieldDef.field_name}": "${value}" is not a valid date. Use DD/MM/YYYY format (e.g. 1/1/2024 or 31/12/2024).`
+    const str = String(value).trim()
+
+    // If custom date_format is specified, use it for validation
+    if (parsed.date_format) {
+      // Build regex pattern from format string
+      // Replace format tokens with regex patterns
+      let pattern = parsed.date_format
+        .replace(/DD/gi, '\\d{1,2}')
+        .replace(/MM/gi, '\\d{1,2}')
+        .replace(/YYYY/gi, '\\d{4}')
+        .replace(/YY/gi, '\\d{2}')
+
+      // Allow optional time component (stored dates might have 00:00:00 appended)
+      const allowTimeRegex = new RegExp(`^${pattern}(\\s+\\d{2}:\\d{2}:\\d{2})?$`)
+
+      // Also accept if it parses as a valid date
+      if (!allowTimeRegex.test(str)) {
+        // Try parsing to see if it's at least a valid date
+        try {
+          const d = new Date(str)
+          if (isNaN(d.getTime())) {
+            return `"${fieldDef.field_name}": "${value}" is not a valid date. Use ${parsed.date_format} format (e.g. ${getExampleDate(parsed.date_format)}).`
+          }
+        } catch {
+          return `"${fieldDef.field_name}": "${value}" is not a valid date. Use ${parsed.date_format} format (e.g. ${getExampleDate(parsed.date_format)}).`
+        }
+      }
+    } else {
+      // Fallback to default formats if no custom format
+      const ddmmyyyy = /^\d{1,2}\/\d{1,2}\/\d{4}(\s+\d{2}:\d{2}:\d{2})?$/.test(str)
+      const yyyymmdd = /^\d{4}-\d{2}-\d{2}(\s+\d{2}:\d{2}:\d{2})?$/.test(str) && !isNaN(new Date(str).getTime())
+      if (!ddmmyyyy && !yyyymmdd) {
+        return `"${fieldDef.field_name}": "${value}" is not a valid date. Use DD/MM/YYYY format (e.g. 1/1/2024 or 31/12/2024).`
+      }
     }
   }
 
   if (parsed.type === 'datetime') {
-    // Accept DD/MM/YYYY HH:MM:SS (with optional leading zeros: 1/1/2024 14:30:00) or ISO 8601 formats
-    const ddmmFull = /^\d{1,2}\/\d{1,2}\/\d{4} \d{2}:\d{2}:\d{2}$/.test(String(value))
-    const isoFull  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(value)) && !isNaN(new Date(value).getTime())
-    if (!ddmmFull && !isoFull) {
-      return `"${fieldDef.field_name}": "${value}" is not a valid date/time. Use DD/MM/YYYY HH:MM:SS format (e.g. 1/1/2024 14:30:00).`
+    const str = String(value).trim()
+
+    // If custom date_format is specified, use it for validation
+    if (parsed.date_format) {
+      // Build regex pattern from format string
+      let pattern = parsed.date_format
+        .replace(/DD/gi, '\\d{1,2}')
+        .replace(/MM/gi, '\\d{1,2}')
+        .replace(/YYYY/gi, '\\d{4}')
+        .replace(/YY/gi, '\\d{2}')
+        .replace(/HH/gi, '\\d{2}')
+        .replace(/SS/gi, '\\d{2}')
+
+      const formatRegex = new RegExp(`^${pattern}$`)
+
+      if (!formatRegex.test(str)) {
+        // Try parsing to see if it's at least a valid datetime
+        try {
+          const d = new Date(str)
+          if (isNaN(d.getTime())) {
+            return `"${fieldDef.field_name}": "${value}" is not a valid date/time. Use ${parsed.date_format} format (e.g. ${getExampleDateTime(parsed.date_format)}).`
+          }
+        } catch {
+          return `"${fieldDef.field_name}": "${value}" is not a valid date/time. Use ${parsed.date_format} format (e.g. ${getExampleDateTime(parsed.date_format)}).`
+        }
+      }
+    } else {
+      // Fallback to default formats if no custom format
+      const ddmmFull = /^\d{1,2}\/\d{1,2}\/\d{4} \d{2}:\d{2}:\d{2}$/.test(str)
+      const isoFull  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(str) && !isNaN(new Date(str).getTime())
+      if (!ddmmFull && !isoFull) {
+        return `"${fieldDef.field_name}": "${value}" is not a valid date/time. Use DD/MM/YYYY HH:MM:SS format (e.g. 1/1/2024 14:30:00).`
+      }
     }
   }
 
@@ -256,7 +360,10 @@ export function normalizeDateString(dateStr) {
  * Format string uses: DD, MM, YYYY, HH, MM, SS (case-insensitive)
  * Separators: /, :, -, ., space
  *
- * @param {Date|string} value - Date object or ISO date string
+ * Handles dates that may have time components even if format doesn't include them
+ * (e.g., "01/06/2024 00:00:00" with format "DD/MM/YYYY" will display as "01/06/2024")
+ *
+ * @param {Date|string} value - Date object or ISO date string (may include time)
  * @param {string} formatStr - Format string (e.g., "DD/MM/YYYY", "YYYY-MM-DD HH:MM:SS")
  * @returns {string} - Formatted date string
  */

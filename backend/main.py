@@ -44,6 +44,57 @@ def _cleanup_expired_pins():
         del _pin_store[userid]
 
 
+def send_email(to_email: str, subject: str, text_body: str) -> None:
+    """
+    Send an email using SMTP configuration from the database.
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        text_body: Email body (plain text)
+
+    Raises:
+        Exception if SMTP is not configured or email sending fails
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    # Get SMTP config from database
+    db = SessionLocal()
+    try:
+        from models.db_models import AppConfig
+        config = db.query(AppConfig).first()
+        if not config or not config.smtp_config:
+            raise Exception("SMTP not configured")
+
+        smtp_config = config.smtp_config
+
+        # Extract SMTP settings
+        host = smtp_config.get("host")
+        port = smtp_config.get("port", 587)
+        username = smtp_config.get("username")
+        password = smtp_config.get("password", "")
+        use_tls = smtp_config.get("use_tls", True)
+
+        # Create email message
+        msg = MIMEMultipart()
+        msg["From"] = username
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(text_body, "plain"))
+
+        # Send email via SMTP
+        with smtplib.SMTP(host, port) as server:
+            if use_tls:
+                server.starttls()
+            if password:  # Only authenticate if password is provided
+                server.login(username, password)
+            server.send_message(msg)
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Create all tables
 # ---------------------------------------------------------------------------

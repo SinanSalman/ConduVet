@@ -542,6 +542,7 @@ async def upload_file(
                 sample_data=s["sample_data"],
                 depends_on=s["depends_on"],
                 accept_null=s["accept_null"],
+                is_protected=s.get("is_protected", False),
                 field_order=s["field_order"],
             )
         )

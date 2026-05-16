@@ -146,6 +146,7 @@ After login. Functions:
 
 **File Management**
 - Upload a new Excel workbook. On upload:
+  - **Check for duplicates**: Reject upload if a file with the same filename already exists; display helpful error message directing admin to remove the existing file first.
   - Validate that both `Data` and `Schema` sheets exist.
   - Validate that every `Field Name` in Schema matches a column in Data.
   - Validate that no column in Data is missing from Schema (warn but do not block for system columns: `Owner`, `Record Vetter`, `Last Updated`, `Record Status`).

@@ -293,6 +293,20 @@ def _run_migrations():
             )
             conn.commit()
 
+        # Migration 009: expand schema_definitions.description from VARCHAR(512) to TEXT
+        result = conn.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'schema_definitions' AND column_name = 'description'"
+            )
+        )
+        col_info = result.fetchone()
+        if col_info and col_info[0].startswith('character varying'):
+            conn.execute(
+                text("ALTER TABLE schema_definitions ALTER COLUMN description TYPE TEXT")
+            )
+            conn.commit()
+
 
 _run_migrations()
 

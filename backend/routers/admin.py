@@ -499,6 +499,21 @@ async def upload_file(
     file_bytes = await file.read()
     filename = file.filename or "upload.xlsx"
 
+    # Check if a file with this name already exists
+    existing_file = db.query(DataFile).filter(
+        DataFile.filename == filename,
+        DataFile.is_active == True,
+    ).first()
+    if existing_file:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A file named '{filename}' already exists on the server. "
+                f"Please remove the existing file before uploading a new one with the same name. "
+                f"Go to the Files tab, find '{existing_file.display_name}', and click Remove."
+            ),
+        )
+
     try:
         data_rows, schema_list, history_rows = parse_excel(file_bytes)
     except ValueError as exc:

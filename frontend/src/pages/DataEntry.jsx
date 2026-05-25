@@ -45,7 +45,7 @@ const VETTING_STATUS_FIELDS = new Set(['vetted', 'vetting status', 'record vetti
  * @param {Function} onDeleteRecord - callback function(recordId) for delete button
  * @param {Set}  newRecordIds    - set of record IDs for newly created records
  */
-function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null, newRecordIds = new Set()) {
+function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null, newRecordIds = new Set(), onCopyRecord = null) {
   // Resolve the canonical vetting-status field name from the schema once,
   // so per-cell handlers can read its value without repeatedly scanning row data.
   const vettingFieldDef = schema.find(f =>
@@ -74,6 +74,30 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
   }
 
   const cols = []
+
+  // Copy button at the start of the record (left)
+  if (onCopyRecord) {
+    cols.push({
+      field: 'copy',
+      headerName: '',
+      width: 50,
+      editable: false,
+      sortable: false,
+      filter: false,
+      pinned: 'left',
+      cellRenderer: params => {
+        return (
+          <button
+            onClick={() => onCopyRecord(params.data)}
+            className="h-full w-full flex items-center justify-center text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+            title="Copy / Duplicate record"
+          >
+            📋
+          </button>
+        )
+      },
+    })
+  }
 
   if (isAdmin) {
     cols.push({
@@ -211,7 +235,9 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       // Use text editor for multiple fields - user enters comma-separated values
       col.cellEditor = 'agTextCellEditor'
     } else if (parsed.type === 'number') {
-      col.cellEditor = 'agNumberCellEditor'
+      // Use text editor instead of agNumberCellEditor to avoid type mismatch
+      // (grid stores values as strings, agNumberCellEditor would return a number)
+      col.cellEditor = 'agTextCellEditor'
       // Enforce min/max range validation on edit
       col.cellEditorValidator = params => {
         const num = Number(params.newValue)
@@ -420,9 +446,70 @@ export default function DataEntry({ isAdmin = false }) {
     }
   }, [fileId, rowData])
 
+  // Handle copying an existing record to a new one
+  const handleCopyRecord = useCallback(async (sourceRecord) => {
+    setAddRecordError(null)
+    try {
+      const newRecord = await addNewRecord(fileId)
+      
+      // Copy all user-defined data fields from the source record
+      const copiedData = { ...sourceRecord.data }
+      
+      // Reset/default the vetting-status field for new records.
+      const vettingStatusField = schema.find(
+        f => VETTING_STATUS_FIELDS.has(f.field_name.toLowerCase())
+      )
+
+      if (vettingStatusField) {
+        const parsed = parseDataType(vettingStatusField.data_type)
+        // Boolean "Vetted" defaults to false; legacy list-based "Vetting Status" → "Unvetted".
+        copiedData[vettingStatusField.field_name] =
+          parsed.type === 'boolean' ? false : 'Unvetted'
+      }
+
+      newRecord.data = copiedData
+      newRecord.record_status = 'New'
+
+      setRowData(prev => [...prev, newRecord])
+      dirtyIds.current.add(newRecord.id)
+      // Track this as a new record so protected fields can be edited
+      setNewRecordIds(prev => new Set([...prev, newRecord.id]))
+
+      // Scroll to bottom, focus the new record, and start editing
+      setTimeout(() => {
+        if (gridRef.current?.api) {
+          const displayedRowCount = gridRef.current.api.getDisplayedRowCount()
+          const lastRowIndex = displayedRowCount - 1
+          
+          if (lastRowIndex >= 0) {
+            const cols = gridRef.current.api.getColumnDefs()
+            const firstCol = cols.find(col => col.editable && col.field?.startsWith('data.'))
+            const firstColId = firstCol ? firstCol.field : null
+
+            gridRef.current.api.ensureIndexVisible(lastRowIndex, 'bottom')
+            if (firstColId) {
+              gridRef.current.api.setFocusedCell(lastRowIndex, firstColId)
+              gridRef.current.api.startEditingCell({
+                rowIndex: lastRowIndex,
+                colKey: firstColId,
+              })
+            }
+          }
+        }
+      }, 100)
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      setAddRecordError(
+        typeof detail === 'string'
+          ? `Could not copy record: ${detail}`
+          : 'Could not copy record. Please try again or reload the page.'
+      )
+    }
+  }, [fileId, schema])
+
   const columnDefs = useMemo(
-    () => buildColumnDefs(schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds),
-    [schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds],
+    () => buildColumnDefs(schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds, handleCopyRecord),
+    [schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds, handleCopyRecord],
   )
 
   const defaultColDef = useMemo(() => ({
@@ -431,6 +518,7 @@ export default function DataEntry({ isAdmin = false }) {
     filter: true,
     floatingFilter: false,
     tooltipShowDelay: 200,
+    enableCellTextSelection: true,
   }), [])
 
   useEffect(() => {
@@ -592,6 +680,29 @@ export default function DataEntry({ isAdmin = false }) {
       dirtyIds.current.add(newRecord.id)
       // Track this as a new record so protected fields can be edited
       setNewRecordIds(prev => new Set([...prev, newRecord.id]))
+
+      // Scroll to bottom, focus the new record, and start editing
+      setTimeout(() => {
+        if (gridRef.current?.api) {
+          const displayedRowCount = gridRef.current.api.getDisplayedRowCount()
+          const lastRowIndex = displayedRowCount - 1
+          
+          if (lastRowIndex >= 0) {
+            const cols = gridRef.current.api.getColumnDefs()
+            const firstCol = cols.find(col => col.editable && col.field?.startsWith('data.'))
+            const firstColId = firstCol ? firstCol.field : null
+
+            gridRef.current.api.ensureIndexVisible(lastRowIndex, 'bottom')
+            if (firstColId) {
+              gridRef.current.api.setFocusedCell(lastRowIndex, firstColId)
+              gridRef.current.api.startEditingCell({
+                rowIndex: lastRowIndex,
+                colKey: firstColId,
+              })
+            }
+          }
+        }
+      }, 100)
     } catch (err) {
       const detail = err.response?.data?.detail
       setAddRecordError(
@@ -601,7 +712,6 @@ export default function DataEntry({ isAdmin = false }) {
       )
     }
   }
-
   // Submit (user flow) or save (admin flow)
   async function handleSubmit() {
     if (!gridRef.current?.api) return
@@ -828,6 +938,8 @@ export default function DataEntry({ isAdmin = false }) {
           tooltipInteraction={true}
           rowSelection="single"
           getRowId={params => String(params.data.id)}
+          suppressClipboardPaste={false}
+          suppressCopySingleCellRanges={false}
         />
       </div>
 

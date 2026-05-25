@@ -346,7 +346,7 @@ def submit_records(
             continue
 
         # Field-level protection: check if owner is trying to edit protected fields on existing records
-        if record is not None and not is_vetter:
+        if record is not None and not is_vetter and record.record_status != "New":
             for field_name, new_val in data.items():
                 schema_def = schema_by_name.get(field_name)
                 if schema_def and schema_def.is_protected:
@@ -370,7 +370,7 @@ def submit_records(
             # Skip validation for protected fields on existing records (after submission).
             # Protected fields are validated at entry time, but once submitted on existing
             # records, they become read-only and don't need re-validation.
-            if record is not None and schema_def.is_protected and not is_vetter:
+            if record is not None and record.record_status != "New" and schema_def.is_protected and not is_vetter:
                 continue
 
             value = data.get(field_name)

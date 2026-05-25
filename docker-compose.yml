@@ -30,6 +30,16 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    develop:
+      watch:
+        - action: sync
+          path: ./backend
+          target: /app
+          ignore:
+            - "**/__pycache__"
+            - ".git"
+        - action: rebuild
+          path: ./backend/requirements.txt
 
   frontend:
     build:
@@ -39,6 +49,13 @@ services:
       - "80:80"
     depends_on:
       - backend
+    develop:
+      watch:
+        - action: rebuild
+          path: ./frontend
+          ignore:
+            - "**/node_modules"
+            - "**/dist"
 
 volumes:
   postgres_data:

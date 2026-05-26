@@ -287,6 +287,7 @@ function ReportsTab() {
   const [files, setFiles] = useState([])
   const [selectedFileId, setSelectedFileId] = useState('')
   const [reportType, setReportType] = useState(null)
+  const [showActiveUsers, setShowActiveUsers] = useState(false)
 
   useEffect(() => {
     getAdminFiles()
@@ -294,58 +295,82 @@ function ReportsTab() {
       .catch(() => {})
   }, [])
 
-  const REPORT_TYPES = [
+  const FILE_REPORT_TYPES = [
     { key: 'by-user', label: 'By User' },
     { key: 'by-record', label: 'By Record' },
   ]
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Selectors */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <select
-          value={selectedFileId}
-          onChange={e => { setSelectedFileId(e.target.value); setReportType(null) }}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      {/* System-wide reports */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-700 mb-2">System-Wide Reports</h4>
+        <button
+          onClick={() => { setShowActiveUsers(true); setSelectedFileId(''); setReportType(null) }}
+          className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
+            showActiveUsers
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+          }`}
         >
-          <option value="">Select a file…</option>
-          {files.map(f => (
-            <option key={f.id} value={f.id}>
-              {f.display_name || f.filename}
-            </option>
-          ))}
-        </select>
+          👥 Currently Logged In Users
+        </button>
+      </div>
 
-        {selectedFileId && (
-          <div className="flex gap-2">
-            {REPORT_TYPES.map(rt => (
-              <button
-                key={rt.key}
-                onClick={() => setReportType(rt.key)}
-                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
-                  reportType === rt.key
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                }`}
-              >
-                {rt.label}
-              </button>
+      {/* File-specific reports */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-700 mb-2">File-Specific Reports</h4>
+        <div className="flex flex-wrap gap-3 items-center">
+          <select
+            value={selectedFileId}
+            onChange={e => { setSelectedFileId(e.target.value); setReportType(null); setShowActiveUsers(false) }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Select a file…</option>
+            {files.map(f => (
+              <option key={f.id} value={f.id}>
+                {f.display_name || f.filename}
+              </option>
             ))}
-          </div>
-        )}
+          </select>
+
+          {selectedFileId && (
+            <div className="flex gap-2">
+              {FILE_REPORT_TYPES.map(rt => (
+                <button
+                  key={rt.key}
+                  onClick={() => setReportType(rt.key)}
+                  className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                    reportType === rt.key
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  {rt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Report content */}
+      {showActiveUsers && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4 overflow-auto max-h-[60vh]">
+          <ReportViewer reportType="active-users" isSystemWide={true} />
+        </div>
+      )}
+
       {selectedFileId && reportType && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 overflow-auto max-h-[60vh]">
           <ReportViewer fileId={selectedFileId} reportType={reportType} />
         </div>
       )}
 
-      {!selectedFileId && (
-        <p className="text-gray-400 text-sm italic">Select a file to generate reports.</p>
+      {!showActiveUsers && !selectedFileId && (
+        <p className="text-gray-400 text-sm italic">Select a report above to view.</p>
       )}
-      {selectedFileId && !reportType && (
+      {!showActiveUsers && selectedFileId && !reportType && (
         <p className="text-gray-400 text-sm italic">Choose a report type above.</p>
       )}
     </div>

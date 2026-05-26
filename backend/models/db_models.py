@@ -137,3 +137,19 @@ class FieldHistory(Base):
     )
 
     # No back-reference to DataRecord — record may be NULL for deleted-record events.
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    userid: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    login_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    logout_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_activity: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

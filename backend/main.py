@@ -318,6 +318,24 @@ def _run_migrations():
             # Column may already be TEXT or error is benign
             conn.rollback()
 
+        # Migration 011: create user_sessions table for login/logout tracking
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    id SERIAL PRIMARY KEY,
+                    userid VARCHAR(255) NOT NULL,
+                    login_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    logout_at TIMESTAMP WITH TIME ZONE NULL,
+                    last_activity TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_userid ON user_sessions(userid)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_logout_at ON user_sessions(logout_at)"))
+            conn.commit()
+        except Exception:
+            # Table may already exist
+            conn.rollback()
+
 
 _run_migrations()
 

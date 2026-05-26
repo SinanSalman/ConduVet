@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { AgGridReact } from '@ag-grid-community/react'
 import { ModuleRegistry } from '@ag-grid-community/core'
 import { ClientSideRowModelModule } from '@ag-grid-community/client-side-row-model'
+import DuplicateIcon from '../assets/icons/duplicate-record.svg'
 
 import {
   getUserSchema,
@@ -92,7 +93,7 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
             className="h-full w-full flex items-center justify-center text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors"
             title="Copy / Duplicate record"
           >
-            📋
+            <img src={DuplicateIcon} alt="Duplicate" style={{ width: '18px', height: '18px' }} />
           </button>
         )
       },

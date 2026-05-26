@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth.jwt import create_access_token
+from auth.jwt import create_access_token, get_current_user
 from auth.ldap_stub import auth_provider
 from database import get_db
-from models.db_models import AppUser, AppConfig
+from models.db_models import AppUser, AppConfig, UserSession
 from rate_limiter import limiter
 from services.email_service import send_pin_email
 
@@ -58,6 +58,11 @@ async def user_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    # Create a user session record
+    session = UserSession(userid=user.userid)
+    db.add(session)
+    db.commit()
 
     token = create_access_token(
         data={"sub": user.userid, "scope": "user"},
@@ -199,6 +204,11 @@ async def verify_pin(
             detail="User not found",
         )
 
+    # Create a user session record
+    session = UserSession(userid=user.userid)
+    db.add(session)
+    db.commit()
+
     # Create JWT token
     token = create_access_token(
         data={"sub": user.userid, "scope": "user"},
@@ -211,3 +221,33 @@ async def verify_pin(
         "name": user.name,
         "userid": user.userid,
     }
+
+
+@router.post("/logout")
+def user_logout(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Logout a user by marking their current session as ended.
+    """
+    userid = current_user.get("sub")
+    if not userid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not determine user ID",
+        )
+
+    # Mark the most recent session as logged out
+    session_record = (
+        db.query(UserSession)
+        .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
+        .order_by(UserSession.login_at.desc())
+        .first()
+    )
+
+    if session_record:
+        session_record.logout_at = datetime.now(timezone.utc)
+        db.commit()
+
+    return {"message": "Logged out successfully"}

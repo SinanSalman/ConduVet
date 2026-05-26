@@ -28,6 +28,7 @@ from models.db_models import (
     DataRecord,
     FieldHistory,
     SchemaDefinition,
+    UserSession,
 )
 from services.excel_service import export_excel, parse_excel
 from services.schema_parser import parse_data_type
@@ -1090,6 +1091,82 @@ def report_by_record_download(
         io.BytesIO(xlsx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="report_by_record.xlsx"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /reports/active-users — system-wide report of users with recent activity
+# ---------------------------------------------------------------------------
+
+@router.get("/reports/active-users")
+def report_active_users(
+    _admin=Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Report of currently logged-in users based on active sessions.
+    Shows only users with open sessions (logout_at is NULL).
+    """
+    # Get user details map
+    user_map = {u.userid: u.name for u in db.query(AppUser).all()}
+
+    # Find currently active sessions (no logout_at)
+    active_sessions = (
+        db.query(
+            UserSession.userid,
+            func.max(UserSession.login_at).label("login_at"),
+        )
+        .filter(UserSession.logout_at.is_(None))
+        .group_by(UserSession.userid)
+        .order_by(func.max(UserSession.login_at).desc())
+        .all()
+    )
+
+    # Build rows with user info
+    rows = []
+    for userid, login_at in active_sessions:
+        user_name = user_map.get(userid, "Unknown")
+        login_time_str = login_at.strftime("%Y-%m-%d %H:%M:%S") if login_at else "—"
+        rows.append([userid, user_name, login_time_str])
+
+    columns = ["User ID", "Name", "Logged In At"]
+    return {"columns": columns, "rows": rows}
+
+
+@router.get("/reports/active-users/download")
+def report_active_users_download(
+    _admin=Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Download currently logged-in users report as Excel."""
+    # Get user details map
+    user_map = {u.userid: u.name for u in db.query(AppUser).all()}
+
+    # Find currently active sessions (no logout_at)
+    active_sessions = (
+        db.query(
+            UserSession.userid,
+            func.max(UserSession.login_at).label("login_at"),
+        )
+        .filter(UserSession.logout_at.is_(None))
+        .group_by(UserSession.userid)
+        .order_by(func.max(UserSession.login_at).desc())
+        .all()
+    )
+
+    # Build rows
+    rows = []
+    for userid, login_at in active_sessions:
+        user_name = user_map.get(userid, "Unknown")
+        login_time_str = login_at.strftime("%Y-%m-%d %H:%M:%S") if login_at else "—"
+        rows.append([userid, user_name, login_time_str])
+
+    headers = ["User ID", "Name", "Logged In At"]
+    xlsx_bytes = _build_report_xlsx(headers, rows)
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="report_active_users.xlsx"'},
     )
 
 

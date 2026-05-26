@@ -241,6 +241,18 @@ export async function downloadReport(fileId, type) {
   return res.data
 }
 
+export async function getActiveUsersReport() {
+  const res = await adminApi.get(`/admin/reports/active-users`)
+  return res.data
+}
+
+export async function downloadActiveUsersReport() {
+  const res = await adminApi.get(`/admin/reports/active-users/download`, {
+    responseType: 'blob',
+  })
+  return res.data
+}
+
 // ── User – Files & Records ────────────────────────────────────────────────────
 
 export async function getUserFiles() {

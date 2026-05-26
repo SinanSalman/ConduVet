@@ -554,17 +554,19 @@ export default function DataEntry({ isAdmin = false }) {
         setDisplayName(datasetName)
         setRowData(recordsData || [])
 
-        // Load lock status for all records
-        try {
-          const locks = await getFileLocks(fileId)
-          const lockMap = {}
-          locks.forEach(lock => {
-            lockMap[lock.id] = lock
-          })
-          setRecordLocks(lockMap)
-        } catch (err) {
-          // Silently fail lock loading — it's informational
-          console.error('Failed to load record locks:', err)
+        // Load lock status for all records (user mode only — locks are user-specific)
+        if (!isAdmin) {
+          try {
+            const locks = await getFileLocks(fileId)
+            const lockMap = {}
+            locks.forEach(lock => {
+              lockMap[lock.id] = lock
+            })
+            setRecordLocks(lockMap)
+          } catch (err) {
+            // Silently fail lock loading — it's informational
+            console.error('Failed to load record locks:', err)
+          }
         }
       } catch (err) {
         setError(err.response?.data?.detail || 'Failed to load data')

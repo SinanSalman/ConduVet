@@ -59,10 +59,17 @@ async def user_login(
             detail="Invalid credentials",
         )
 
-    # Create a user session record
-    session = UserSession(userid=user.userid)
-    db.add(session)
-    db.commit()
+    # Create a user session record (best-effort; continue even if it fails)
+    try:
+        session = UserSession(userid=user.userid)
+        db.add(session)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Session creation failed, but authentication succeeded. Log it but don't fail.
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to create UserSession for user {user.userid}")
 
     token = create_access_token(
         data={"sub": user.userid, "scope": "user"},
@@ -204,10 +211,17 @@ async def verify_pin(
             detail="User not found",
         )
 
-    # Create a user session record
-    session = UserSession(userid=user.userid)
-    db.add(session)
-    db.commit()
+    # Create a user session record (best-effort; continue even if it fails)
+    try:
+        session = UserSession(userid=user.userid)
+        db.add(session)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Session creation failed, but authentication succeeded. Log it but don't fail.
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to create UserSession for user {user.userid}")
 
     # Create JWT token
     token = create_access_token(
@@ -238,16 +252,23 @@ def user_logout(
             detail="Could not determine user ID",
         )
 
-    # Mark the most recent session as logged out
-    session_record = (
-        db.query(UserSession)
-        .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
-        .order_by(UserSession.login_at.desc())
-        .first()
-    )
+    # Mark the most recent session as logged out (best-effort; continue even if it fails)
+    try:
+        session_record = (
+            db.query(UserSession)
+            .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
+            .order_by(UserSession.login_at.desc())
+            .first()
+        )
 
-    if session_record:
-        session_record.logout_at = datetime.now(timezone.utc)
-        db.commit()
+        if session_record:
+            session_record.logout_at = datetime.now(timezone.utc)
+            db.commit()
+    except Exception:
+        db.rollback()
+        # Session logout failed, but still return success
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to mark logout for user {userid}")
 
     return {"message": "Logged out successfully"}

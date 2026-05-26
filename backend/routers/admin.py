@@ -339,10 +339,17 @@ async def admin_login(
             detail="Invalid admin credentials",
         )
 
-    # Create a user session record for the admin
-    session = UserSession(userid=username.upper())
-    db.add(session)
-    db.commit()
+    # Create a user session record for the admin (best-effort; continue even if it fails)
+    try:
+        session = UserSession(userid=username.upper())
+        db.add(session)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Session creation failed, but authentication succeeded. Log it but don't fail.
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to create UserSession for admin {username.upper()}")
 
     token = create_access_token(
         data={"sub": username.upper(), "scope": "admin"},
@@ -374,17 +381,24 @@ def admin_logout(
             detail="Could not determine user ID",
         )
 
-    # Mark the most recent session as logged out
-    session_record = (
-        db.query(UserSession)
-        .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
-        .order_by(UserSession.login_at.desc())
-        .first()
-    )
+    # Mark the most recent session as logged out (best-effort; continue even if it fails)
+    try:
+        session_record = (
+            db.query(UserSession)
+            .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
+            .order_by(UserSession.login_at.desc())
+            .first()
+        )
 
-    if session_record:
-        session_record.logout_at = datetime.now(timezone.utc)
-        db.commit()
+        if session_record:
+            session_record.logout_at = datetime.now(timezone.utc)
+            db.commit()
+    except Exception:
+        db.rollback()
+        # Session logout failed, but still return success
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to mark logout for admin {userid}")
 
     return {"message": "Logged out successfully"}
 
@@ -948,18 +962,25 @@ def delete_record_admin(
     changed_by = _admin.get("sub", "admin")
     now = datetime.now(timezone.utc)
 
-    # Log a deletion event before removing the record.
-    db.add(
-        FieldHistory(
-            record_id=None,
-            file_id=file_id,
-            field_name="_ROW_DELETED",
-            old_value=str(record.id),
-            new_value=None,
-            changed_by=changed_by,
-            changed_at=now,
+    # Log a deletion event before removing the record (best-effort; continue even if it fails)
+    try:
+        db.add(
+            FieldHistory(
+                record_id=None,
+                file_id=file_id,
+                field_name="_ROW_DELETED",
+                old_value=str(record.id),
+                new_value=None,
+                changed_by=changed_by,
+                changed_at=now,
+            )
         )
-    )
+    except Exception:
+        db.rollback()
+        import logging
+        logger = logging.getLogger("conduvet")
+        logger.warning(f"Failed to log deletion for record {record_id}")
+
     db.delete(record)
     try:
         db.commit()

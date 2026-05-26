@@ -1,12 +1,14 @@
 
 # Other
 .DS_Store
+get_latest_from_repository.sh
 
 # Large files
 
 # Sensitive data
 _Data/
 .claude/
+.antigravitycli/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

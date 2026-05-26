@@ -347,8 +347,8 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
     valueFormatter: params => formatDateTime(params.value),
   })
 
-  // Delete button (vetter only — user mode only)
-  if (!isAdmin && onDeleteRecord) {
+  // Delete button (admin always, vetter-only in user mode)
+  if (onDeleteRecord) {
     cols.push({
       field: 'delete',
       headerName: '',
@@ -358,6 +358,20 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       filter: false,
       pinned: 'right',
       cellRenderer: params => {
+        // Admins can always delete
+        if (isAdmin) {
+          return (
+            <button
+              onClick={() => onDeleteRecord(params.data.id)}
+              className="h-full w-full flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 transition-colors"
+              title="Delete record"
+            >
+              🗑️
+            </button>
+          )
+        }
+
+        // In user mode, only vetters can delete
         const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
         if (!isVetter) return null
 
@@ -428,7 +442,7 @@ export default function DataEntry({ isAdmin = false }) {
     if (!confirmDelete) return
 
     try {
-      await deleteRecord(fileId, recordId)
+      await deleteRecord(fileId, recordId, isAdmin)
       // Remove the record from the grid
       setRowData(prev => prev.filter(r => r.id !== recordId))
       // Remove from locks if it was locked
@@ -445,7 +459,7 @@ export default function DataEntry({ isAdmin = false }) {
           : 'Failed to delete record. You may only delete records assigned to you as a vetter.'
       )
     }
-  }, [fileId, rowData])
+  }, [fileId, rowData, isAdmin])
 
   // Handle copying an existing record to a new one
   const handleCopyRecord = useCallback(async (sourceRecord) => {

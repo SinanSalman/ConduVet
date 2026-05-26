@@ -325,7 +325,8 @@ export async function getAutoLogoutMinutes() {
   }
 }
 
-export async function deleteRecord(fileId, recordId) {
-  const res = await api.delete(`/files/${fileId}/records/${recordId}`)
+export async function deleteRecord(fileId, recordId, isAdmin = false) {
+  const apiClient = isAdmin ? adminApi : api
+  const res = await apiClient.delete(`${isAdmin ? '/admin' : ''}/files/${fileId}/records/${recordId}`)
   return res.data
 }

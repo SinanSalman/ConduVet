@@ -339,6 +339,11 @@ async def admin_login(
             detail="Invalid admin credentials",
         )
 
+    # Create a user session record for the admin
+    session = UserSession(userid=username.upper())
+    db.add(session)
+    db.commit()
+
     token = create_access_token(
         data={"sub": username.upper(), "scope": "admin"},
         expires_delta=timedelta(hours=8),
@@ -348,6 +353,40 @@ async def admin_login(
         "token_type": "bearer",
         "title": config.title,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /logout — admin auth
+# ---------------------------------------------------------------------------
+
+@router.post("/logout")
+def admin_logout(
+    _admin: dict = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Logout an admin by marking their current session as ended.
+    """
+    userid = _admin.get("sub")
+    if not userid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not determine user ID",
+        )
+
+    # Mark the most recent session as logged out
+    session_record = (
+        db.query(UserSession)
+        .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
+        .order_by(UserSession.login_at.desc())
+        .first()
+    )
+
+    if session_record:
+        session_record.logout_at = datetime.now(timezone.utc)
+        db.commit()
+
+    return {"message": "Logged out successfully"}
 
 
 # ---------------------------------------------------------------------------
@@ -878,6 +917,57 @@ def batch_update_records(
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save records. Please try again.")
     return {"ok": True, "updated": len(updated_ids)}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /files/{file_id}/records/{record_id} — admin auth
+# ---------------------------------------------------------------------------
+
+@router.delete("/files/{file_id}/records/{record_id}")
+def delete_record_admin(
+    file_id: int,
+    record_id: int,
+    _admin: dict = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a record. Admins can delete any record.
+
+    Returns:
+        - 200: Record deleted
+        - 404: Record not found
+    """
+    record = (
+        db.query(DataRecord)
+        .filter(DataRecord.id == record_id, DataRecord.file_id == file_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    changed_by = _admin.get("sub", "admin")
+    now = datetime.now(timezone.utc)
+
+    # Log a deletion event before removing the record.
+    db.add(
+        FieldHistory(
+            record_id=None,
+            file_id=file_id,
+            field_name="_ROW_DELETED",
+            old_value=str(record.id),
+            new_value=None,
+            changed_by=changed_by,
+            changed_at=now,
+        )
+    )
+    db.delete(record)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete record. Please try again.")
+
+    return {"ok": True, "deleted_record_id": record_id}
 
 
 # ---------------------------------------------------------------------------

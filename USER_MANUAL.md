@@ -119,6 +119,7 @@ The context panel is split into two columns:
 
 ### Creating a New Record
 
+**Method 1: Add a blank record**
 1. Click the **+ Add Record** button
 2. A new empty row is added to the grid
 3. The new record will be:
@@ -126,6 +127,16 @@ The context panel is split into two columns:
    - Assigned a vetter automatically
    - Set to **New** status
    - **Vetted** checkbox set to unchecked (false)
+
+**Method 2: Duplicate an existing record**
+1. Click the **duplicate icon** (🔄 double document icon) at the right of any row
+2. A new record is created as a copy of the selected record
+3. All data fields are copied from the source record
+4. The new record will be:
+   - Owned by you
+   - Set to **New** status
+   - **Vetted** checkbox set to unchecked (false) even if the source was vetted
+   - The vetter will be assigned automatically (may differ from the source record's vetter)
 
 ### Editing Existing Records
 
@@ -416,6 +427,8 @@ The timer resets whenever you:
 3. **Read error messages** — They explain exactly what is wrong and how to fix it
 4. **Respect locks** — If another user has a record locked, wait for them to submit or time out
 5. **Check edit history** — Before submitting, review what you changed in the right column of the context panel
+6. **Use the duplicate feature** — Click the duplicate icon (🔄) on any row to quickly create a new record with the same data. This is faster than manually re-entering similar information across multiple records.
+7. **Copy and paste data** — Use Cmd+C / Ctrl+C to copy a cell value and Cmd+V / Ctrl+V to paste it into another cell. Useful for filling multiple cells with the same or similar values.
 
 ### Working with Dates
 
@@ -464,8 +477,16 @@ For fields that accept multiple values:
 | Move between cells | Arrow Keys |
 | Start editing a cell | Start typing |
 | Confirm edit and move | Enter or Tab |
+| Copy cell content | Cmd + C (Mac) / Ctrl + C (Windows/Linux) |
+| Paste cell content | Cmd + V (Mac) / Ctrl + V (Windows/Linux) |
 | Submit changes | Click Submit button |
 | Logout | Click Logout button |
+
+**Copy/Paste Tips:**
+- You can copy text from one cell and paste it into another cell
+- Copy works on the currently focused cell
+- Paste inserts the copied content into the focused cell
+- Useful for quickly filling multiple cells with similar data or duplicating values
 
 ---
 

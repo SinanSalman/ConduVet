@@ -129,6 +129,11 @@ export async function adminLogin(username, password) {
   return res.data
 }
 
+export async function adminLogout() {
+  const res = await adminApi.post('/admin/logout')
+  return res.data
+}
+
 export async function userLogin(username, password) {
   const form = new FormData()
   form.append('username', username)
@@ -326,7 +331,10 @@ export async function getAutoLogoutMinutes() {
 }
 
 export async function deleteRecord(fileId, recordId, isAdmin = false) {
+  const endpoint = isAdmin
+    ? `/admin/files/${fileId}/records/${recordId}`
+    : `/files/${fileId}/records/${recordId}`
   const apiClient = isAdmin ? adminApi : api
-  const res = await apiClient.delete(`${isAdmin ? '/admin' : ''}/files/${fileId}/records/${recordId}`)
+  const res = await apiClient.delete(endpoint)
   return res.data
 }

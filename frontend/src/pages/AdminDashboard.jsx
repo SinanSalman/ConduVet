@@ -10,6 +10,7 @@ import {
   updateAdminConfigUsers,
   setAppTitle,
   clearAdminToken,
+  adminLogout,
   resetAllData,
   clearAllLocalStorage,
 } from '../api'
@@ -697,9 +698,16 @@ export default function AdminDashboard() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('Files')
 
-  function handleLogout() {
-    clearAdminToken()
-    navigate('/admin/login')
+  async function handleLogout() {
+    try {
+      await adminLogout()
+    } catch (err) {
+      // Log the error but continue with logout
+      console.error('Logout endpoint error:', err)
+    } finally {
+      clearAdminToken()
+      navigate('/admin/login')
+    }
   }
 
   function handleEditFile(file) {

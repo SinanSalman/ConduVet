@@ -4,6 +4,7 @@ Admin router — /api/admin/*
 
 import csv
 import io
+import logging
 import os
 import re
 import shutil
@@ -14,8 +15,10 @@ import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
-from sqlalchemy import func
+from sqlalchemy import exc as sqlalchemy_exc, func
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("conduvet")
 
 from auth.jwt import create_access_token, get_current_admin
 from database import get_db
@@ -344,12 +347,10 @@ async def admin_login(
         session = UserSession(userid=username.upper())
         db.add(session)
         db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session creation failed, but authentication succeeded. Log it but don't fail.
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to create UserSession for admin {username.upper()}")
+        logger.warning(f"Failed to create UserSession for admin {username.upper()}: {e}")
 
     token = create_access_token(
         data={"sub": username.upper(), "scope": "admin"},
@@ -393,12 +394,10 @@ def admin_logout(
         if session_record:
             session_record.logout_at = datetime.now(timezone.utc)
             db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session logout failed, but still return success
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to mark logout for admin {userid}")
+        logger.warning(f"Failed to mark logout for admin {userid}: {e}")
 
     return {"message": "Logged out successfully"}
 
@@ -975,17 +974,16 @@ def delete_record_admin(
                 changed_at=now,
             )
         )
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to log deletion for record {record_id}")
+        logger.warning(f"Failed to log deletion for record {record_id}: {e}")
 
     db.delete(record)
     try:
         db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
+        logger.error(f"Failed to delete record {record_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete record. Please try again.")
 
     return {"ok": True, "deleted_record_id": record_id}

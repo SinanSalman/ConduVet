@@ -2,6 +2,7 @@
 Auth router — /api/auth/*
 """
 
+import logging
 import os
 import random
 import string
@@ -9,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import exc as sqlalchemy_exc
 from sqlalchemy.orm import Session
 
 from auth.jwt import create_access_token, get_current_user
@@ -17,6 +19,8 @@ from database import get_db
 from models.db_models import AppUser, AppConfig, UserSession
 from rate_limiter import limiter
 from services.email_service import send_pin_email
+
+logger = logging.getLogger("conduvet")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -64,12 +68,10 @@ async def user_login(
         session = UserSession(userid=user.userid)
         db.add(session)
         db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session creation failed, but authentication succeeded. Log it but don't fail.
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to create UserSession for user {user.userid}")
+        logger.warning(f"Failed to create UserSession for user {user.userid}: {e}")
 
     token = create_access_token(
         data={"sub": user.userid, "scope": "user"},
@@ -216,12 +218,10 @@ async def verify_pin(
         session = UserSession(userid=user.userid)
         db.add(session)
         db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session creation failed, but authentication succeeded. Log it but don't fail.
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to create UserSession for user {user.userid}")
+        logger.warning(f"Failed to create UserSession for user {user.userid}: {e}")
 
     # Create JWT token
     token = create_access_token(
@@ -264,11 +264,9 @@ def user_logout(
         if session_record:
             session_record.logout_at = datetime.now(timezone.utc)
             db.commit()
-    except Exception:
+    except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session logout failed, but still return success
-        import logging
-        logger = logging.getLogger("conduvet")
-        logger.warning(f"Failed to mark logout for user {userid}")
+        logger.warning(f"Failed to mark logout for user {userid}: {e}")
 
     return {"message": "Logged out successfully"}

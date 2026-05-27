@@ -385,13 +385,19 @@ Access the admin interface at `/admin/login` (link in the top-right corner of ev
 
 | Action | Effect |
 |---|---|
-| **View / Edit** | Opens the AG Grid for that file. Admins see all records (not filtered by owner) with the Owner and Vetter columns editable. |
+| **View / Edit** | Opens the AG Grid for that file. Admins see all records (not filtered by owner) with the Owner and Vetter columns editable. Admins can delete any individual record by clicking the trash icon (🗑️) in the rightmost column of each row. Deletions are confirmed and recorded in the audit trail. |
 | **Download** | Downloads the current state as an Excel workbook (Data + Schema + Edit History sheets). |
 | **Remove** | Soft-deletes the file (data is retained in the database). |
 
 ### Reports Tab
 
-Select a file, then choose a report type:
+**System-Wide Reports** (no file selection required):
+
+| Report | Columns | Description |
+|---|---|---|
+| Currently Logged In Users | User ID, Name, Logged In At | Shows all users and admins with active sessions. Sorted by most recent login. |
+
+**File-Specific Reports** (select a file first):
 
 | Report | Columns | Description |
 |---|---|---|

@@ -164,6 +164,8 @@ After login. Functions:
 - View and edit all records for any uploaded file (full access, not filtered by Owner).
 - Uses the same AG Grid interface as users but with Owner column visible and editable.
 - **Can edit all fields including the Record Vetter field** to reassign vetters to records.
+- **Can delete any record** by clicking the trash icon (🗑️) in the rightmost column. A confirmation is required. Deletions are recorded in the Edit History with `_ROW_DELETED` event.
+- **Record locks are not displayed** for admins. Locks are user-specific and do not restrict admin access. Admins can edit any record regardless of locks held by users.
 
 **Download**
 - Download any data file as an Excel workbook. The download includes three sheets:
@@ -176,6 +178,14 @@ After login. Functions:
 
 All reports are rendered on-screen as a table and downloadable as Excel files.
 
+**System-Wide Reports** (no file selection required):
+
+| Report | Columns | Description |
+|---|---|---|
+| Currently Logged In Users | User ID, Name, Logged In At | Shows all users and admins with active sessions (where `logout_at IS NULL` in the `user_sessions` table). Sorted by most recent login first. Downloadable as Excel. |
+
+**File-Specific Reports** (select a file first):
+
 | Report | Columns | Description |
 |---|---|---|
 | By User | Owner, Total, New, Updated, Old, Delete | Record counts grouped by owner, broken down by status |
@@ -187,7 +197,25 @@ All reports are rendered on-screen as a table and downloadable as Excel files.
 
 ### Login Page (`/login`) — Landing Page After Configuration
 
-Fields: `User ID`, `Password`. Authenticates against the users CSV data stored in DB. Issues a JWT with user scope on success.
+**Authentication Methods:**
+
+1. **PIN-Based Email Authentication (Primary)**
+   - Users enter their **User ID** on the login page.
+   - System generates a random 5-digit PIN and sends it to `{userid}@{user_domain}` via configured SMTP.
+   - User receives the PIN via email and enters it on the login page to authenticate.
+   - PINs expire after `pin_expiration_minutes` (default: 15, configured in `config.yaml`).
+   - Requires SMTP configuration in `config.yaml` under the `smtp_config` section (host, port, username, optional password).
+
+2. **Password Authentication (Fallback)**
+   - Available when PIN authentication is not configured or as a fallback.
+   - Users click "Use Password" on the login page to switch to password mode.
+   - Enter **User ID** and **Password**.
+   - Passwords are stored as bcrypt hashes in the database; plaintext is never persisted.
+   - Authenticates against the users CSV data stored in DB.
+
+**Token Issuance:**
+- On successful authentication (either method), issues a JWT with user scope.
+- Token expiry: 8 hours.
 
 ### Main Menu (`/dashboard`)
 
@@ -371,6 +399,25 @@ file_id, field_name, old_value, new_value, changed_by (userid), changed_at
 - System event field names: `_ROW_ADDED` (on record creation), `_ROW_DELETED` (on record deletion).
 - `Record Status` changes are logged as regular field history entries with `field_name = "Record Status"`.
 
+### `user_sessions`
+Tracks user and admin login/logout events for session management and active session reporting.
+
+```
+id (PK), userid, login_at, logout_at (nullable), last_activity
+```
+
+- `userid` (String): User ID of the logged-in user or admin account.
+- `login_at` (DateTime): Timestamp when the session started (server default: CURRENT_TIMESTAMP).
+- `logout_at` (DateTime, nullable): Timestamp when the session ended. **NULL means the session is still active.**
+- `last_activity` (DateTime): Timestamp of the last recorded activity in this session.
+- **Indexed on**: `userid`, `logout_at` for efficient session queries.
+
+**Purpose:**
+- Enables the "Currently Logged In Users" report by querying sessions where `logout_at IS NULL`.
+- Tracks when users and admins log in and out for audit purposes.
+- Created automatically on every successful login (user or admin).
+- Marked with logout timestamp when user/admin explicitly logs out or when the session expires.
+
 ---
 
 ## Backup System
@@ -398,7 +445,9 @@ file_id, field_name, old_value, new_value, changed_by (userid), changed_at
 - **Vetter assignment**: Auto-assigned on record creation or manually assigned by admin.
 - **Vetting permissions**: Only assigned vetter can edit the `Vetted` (Boolean) field.
 - **Vetted-lock**: When `Vetted = true`, the owner is locked out of all edits. Vetter and admin retain full edit access.
-- **Record deletion**: Only assigned vetter can delete their records.
+- **Record deletion**: 
+  - In **user mode**: Only the assigned vetter can delete their assigned records.
+  - In **admin mode**: Admins can delete any record from any file. Deletions are recorded in the audit trail as `_ROW_DELETED` events.
 - **Flexible vetter management**: Admin can reassign vetters or change record ownership at any time.
 
 ### Record Status
@@ -410,10 +459,12 @@ file_id, field_name, old_value, new_value, changed_by (userid), changed_at
 - Lock status visible to all users viewing the file.
 - Automatic lock release on submit, logout, or session timeout.
 
-### Session Management
-- Configurable auto-logout timer (default: 30 minutes).
-- Activity monitoring resets the timeout.
-- Graceful cleanup on timeout (locks released, user logged out).
+### Session Management & Tracking
+- **Session tracking**: Every user and admin login creates a `user_sessions` record. Logouts (explicit or via timeout) mark the session with a `logout_at` timestamp.
+- **Active session reporting**: The "Currently Logged In Users" report queries sessions where `logout_at IS NULL` to show active users and admins.
+- **Configurable auto-logout timer** (default: 30 minutes, range: 1-480, configured in `config.yaml`).
+- **Activity monitoring**: Timer resets on user interaction (click, keypress, mousemove, scroll).
+- **Graceful cleanup on timeout**: Locks released, user logged out, session marked with logout timestamp.
 
 ### Data Integrity & Audit
 - Complete edit history with user names and timestamps, including Record Status changes.

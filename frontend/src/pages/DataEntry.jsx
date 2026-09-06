@@ -13,7 +13,10 @@ import {
   getAdminSchema,
   getAdminRecords,
   updateAdminRecords,
+  createAdminRecord,
   getUserId,
+  getUserRole,
+  getUserGroup,
   lockRecord,
   unlockRecord,
   getFileLocks,
@@ -30,7 +33,7 @@ ModuleRegistry.registerModules([ClientSideRowModelModule])
 // System columns are managed explicitly in buildColumnDefs.
 // They must be excluded from the schema-driven loop to prevent duplicates,
 // because some workbooks include these fields in their Schema sheet as well.
-const SYSTEM_FIELD_NAMES = new Set(['owner', 'vetter', 'record vetter', 'last updated', 'record status'])
+const SYSTEM_FIELD_NAMES = new Set(['owner', 'group', 'vetter', 'record vetter', 'last updated', 'record status'])
 
 // Lowercase names that identify the vetting-status field. Includes the
 // current name ("vetted" — boolean) and legacy names ("vetting status",
@@ -46,7 +49,17 @@ const VETTING_STATUS_FIELDS = new Set(['vetted', 'vetting status', 'record vetti
  * @param {Function} onDeleteRecord - callback function(recordId) for delete button
  * @param {Set}  newRecordIds    - set of record IDs for newly created records
  */
-function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRecord = null, newRecordIds = new Set(), onCopyRecord = null) {
+function buildColumnDefs(
+  schema,
+  isAdmin = false,
+  currentUserId = '',
+  currentUserRole = 'Normal',
+  currentUserGroup = 'ALL',
+  onDeleteRecord = null,
+  newRecordIds = new Set(),
+  onCopyRecord = null,
+) {
+  const normalizeValue = value => String(value || '').trim().toUpperCase()
   // Resolve the canonical vetting-status field name from the schema once,
   // so per-cell handlers can read its value without repeatedly scanning row data.
   const vettingFieldDef = schema.find(f =>
@@ -54,12 +67,33 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
   )
   const vettingFieldName = vettingFieldDef?.field_name || null
 
+  const recordOwner = rowData => normalizeValue(rowData?.owner)
+  const recordGroup = rowData => normalizeValue(rowData?.group)
+  const userGroup = normalizeValue(currentUserGroup)
+  const userRole = normalizeValue(currentUserRole)
+  const isVetterForRow = rowData => {
+    if (isAdmin || userRole !== 'VETTER') return false
+    const group = recordGroup(rowData)
+    return group === userGroup || group === 'ALL'
+  }
+  const canEditRow = rowData => {
+    if (isAdmin) return true
+    if (isVetterForRow(rowData)) return true
+    return recordOwner(rowData) === normalizeValue(currentUserId)
+  }
+
   // Returns true when the row is "vetted-locked" for the current user —
-  // i.e. they are the owner (not the vetter) and the vetter has marked Vetted = true.
+  // i.e. they are the owner and the vetter has marked Vetted = true.
   const isVettedLockedForCurrentUser = rowData => {
     if (isAdmin || !vettingFieldName) return false
-    const isVetter = rowData?.vetter?.toUpperCase() === currentUserId
-    if (isVetter) return false
+    if (isVetterForRow(rowData)) return false
+    if (recordOwner(rowData) !== normalizeValue(currentUserId)) return false
+    return toBoolean(rowData?.data?.[vettingFieldName])
+  }
+
+  // Check if a record has been vetted (regardless of owner)
+  const isRecordVetted = rowData => {
+    if (!vettingFieldName) return false
     return toBoolean(rowData?.data?.[vettingFieldName])
   }
   // Cell renderer that makes URLs clickable
@@ -108,6 +142,13 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       width: 120,
       pinned: 'left',
     })
+    cols.push({
+      field: 'group',
+      headerName: 'Group',
+      editable: true,
+      width: 120,
+      pinned: 'left',
+    })
   }
 
   for (const field of schema) {
@@ -130,18 +171,18 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
     }
 
     if (isVettingStatusField) {
-      // Only the assigned vetter for this record can edit the vetting status.
+      // Only the vetter for this record's group can edit the vetting status.
       col.editable = params => {
         if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
           return false  // Locked by another user
         }
-        return params.data?.vetter?.toUpperCase() === currentUserId
+        return isVetterForRow(params.data)
       }
       col.cellStyle = params => {
         if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
           return { backgroundColor: '#f3f4f6', color: '#9ca3af', opacity: '0.6' }
         }
-        const canEdit = params.data?.vetter?.toUpperCase() === currentUserId
+        const canEdit = isVetterForRow(params.data)
         if (!canEdit) return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
         const err = validateCell(params.value, field, params.data?.data)
         return err ? { backgroundColor: '#fee2e2', borderColor: '#fca5a5' } : {}
@@ -152,8 +193,11 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         if (params.data?.is_locked && params.data?.locked_by !== currentUserId) {
           return false
         }
-        // Vetted-lock: owner cannot edit a record the vetter has marked vetted
+        // Vetted-lock: owners cannot edit a record the vetter has already marked vetted.
         if (isVettedLockedForCurrentUser(params.data)) {
+          return false
+        }
+        if (!canEditRow(params.data)) {
           return false
         }
         // Field-level protection: owner cannot edit protected fields on existing records
@@ -161,7 +205,7 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         const isNewRecord = newRecordIds.has(params.data?.id)
         // Convert is_protected to boolean in case it comes as a string from API
         const isProtected = field.is_protected === true || field.is_protected === 'true' || field.is_protected === 1
-        if (isProtected && !isNewRecord && !isAdmin) {
+        if (isProtected && !isNewRecord && !isAdmin && !isVetterForRow(params.data)) {
           return false
         }
         return true
@@ -173,11 +217,14 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
         if (isVettedLockedForCurrentUser(params.data)) {
           return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
         }
+        if (!canEditRow(params.data)) {
+          return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
+        }
         // Visual indicator for protected fields on existing records
         const isNewRecord = newRecordIds.has(params.data?.id)
         // Convert is_protected to boolean in case it comes as a string from API
         const isProtected = field.is_protected === true || field.is_protected === 'true' || field.is_protected === 1
-        if (isProtected && !isNewRecord && !isAdmin) {
+        if (isProtected && !isNewRecord && !isAdmin && !isVetterForRow(params.data)) {
           return {
             backgroundColor: '#fef3c7',  // Light yellow/amber
             color: '#b45309',             // Darker amber text
@@ -283,27 +330,19 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
 
   // Vetter — who is assigned to vet this record (admin-only)
   if (isAdmin) {
-    cols.push({
-      field: 'vetter',
-      headerName: 'Vetter',
-      editable: true,
-      width: 110,
-      cellStyle: { color: '#6b7280' },
-    })
+    // Legacy per-record vetter assignment is no longer used.
   }
 
-  // Record Status (system status: New / Updated / Old / Delete)
+  // Record Status (system status: New / Updated / Old / Archived)
   cols.push({
     field: 'record_status',
     headerName: 'Record Status',
     editable: params => {
       // Admin can always edit
       if (isAdmin) return true
-      // In user mode: owner cannot edit if vetted, but vetter can always edit
-      const isOwner = params.data?.owner?.toUpperCase() === currentUserId
-      const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
-      // Vetter can always edit
-      if (isVetter) return true
+      // In user mode: vetters can edit their group; normal users can edit their own records.
+      if (isVetterForRow(params.data)) return true
+      const isOwner = recordOwner(params.data) === normalizeValue(currentUserId)
       // Owner cannot edit if vetted (vetted-lock)
       if (isOwner && isVettedLockedForCurrentUser(params.data)) {
         return false
@@ -312,13 +351,12 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       return isOwner
     },
     cellEditor: 'agSelectCellEditor',
-    cellEditorParams: { values: ['Old', 'New', 'Updated', 'Delete'] },
+    cellEditorParams: { values: ['Old', 'New', 'Updated', 'Archived'] },
     width: 120,
     cellStyle: params => {
-      const isOwner = params.data?.owner?.toUpperCase() === currentUserId
-      const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
-      // If not owner and not vetter and not admin, grey out
-      if (!isOwner && !isVetter && !isAdmin) {
+      const isOwner = recordOwner(params.data) === normalizeValue(currentUserId)
+      // If not owner, vetter, or admin, grey out
+      if (!isOwner && !isVetterForRow(params.data) && !isAdmin) {
         return { backgroundColor: '#f3f4f6', color: '#9ca3af' }
       }
       // Check lock status
@@ -333,7 +371,7 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
       if (s === 'Old')      return { color: '#2c2c2c', fontWeight: '600' }
       if (s === 'New')      return { color: '#16a34a', fontWeight: '600' }
       if (s === 'Updated')  return { color: '#2563eb', fontWeight: '600' }
-      if (s === 'Delete')   return { color: '#ff0000', fontWeight: '600' }
+      if (s === 'Archived') return { color: '#ff0000', fontWeight: '600' }
       return {}
     },
   })
@@ -347,7 +385,7 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
     valueFormatter: params => formatDateTime(params.value),
   })
 
-  // Delete button (admin always, vetter-only in user mode)
+  // Delete button (admin always, vetter-only, or owner of unvetted records)
   if (onDeleteRecord) {
     cols.push({
       field: 'delete',
@@ -371,19 +409,34 @@ function buildColumnDefs(schema, isAdmin = false, currentUserId = '', onDeleteRe
           )
         }
 
-        // In user mode, only vetters can delete
-        const isVetter = params.data?.vetter?.toUpperCase() === currentUserId
-        if (!isVetter) return null
+        // In user mode: vetters can delete records in their group
+        if (isVetterForRow(params.data)) {
+          return (
+            <button
+              onClick={() => onDeleteRecord(params.data.id)}
+              className="h-full w-full flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 transition-colors"
+              title="Delete record"
+            >
+              🗑️
+            </button>
+          )
+        }
 
-        return (
-          <button
-            onClick={() => onDeleteRecord(params.data.id)}
-            className="h-full w-full flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 transition-colors"
-            title="Delete record"
-          >
-            🗑️
-          </button>
-        )
+        // Owners can delete their own records if not vetted yet
+        const isOwner = recordOwner(params.data) === normalizeValue(currentUserId)
+        if (isOwner && !isRecordVetted(params.data)) {
+          return (
+            <button
+              onClick={() => onDeleteRecord(params.data.id)}
+              className="h-full w-full flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 transition-colors"
+              title="Delete record"
+            >
+              🗑️
+            </button>
+          )
+        }
+
+        return null
       },
     })
   }
@@ -398,6 +451,8 @@ export default function DataEntry({ isAdmin = false }) {
   // Current user's uppercase userid — used to enforce per-row edit restrictions.
   // Populated from localStorage after login; empty string if not found (safe fallback).
   const currentUserId = isAdmin ? '' : (getUserId() || '')
+  const currentUserRole = isAdmin ? 'Normal' : getUserRole()
+  const currentUserGroup = isAdmin ? 'ALL' : getUserGroup()
 
   const [schema, setSchema] = useState([])
   const [rowData, setRowData] = useState([])
@@ -421,6 +476,10 @@ export default function DataEntry({ isAdmin = false }) {
 
   // Track newly created records — owners can edit protected fields on new records
   const [newRecordIds, setNewRecordIds] = useState(new Set())
+
+  // Unsaved changes warning dialog
+  const [showUnsavedWarning, setShowUnsavedWarning] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState(null)
 
   // Build schema dict for quick field lookups
   const schemaDict = useMemo(() => {
@@ -456,7 +515,7 @@ export default function DataEntry({ isAdmin = false }) {
       alert(
         typeof detail === 'string'
           ? `Failed to delete record: ${detail}`
-          : 'Failed to delete record. You may only delete records assigned to you as a vetter.'
+          : 'Failed to delete record. You may only delete records in your vetter group.'
       )
     }
   }, [fileId, rowData, isAdmin])
@@ -483,6 +542,9 @@ export default function DataEntry({ isAdmin = false }) {
       }
 
       newRecord.data = copiedData
+      if (sourceRecord.group !== undefined) {
+        newRecord.group = sourceRecord.group
+      }
       newRecord.record_status = 'New'
 
       setRowData(prev => [...prev, newRecord])
@@ -522,9 +584,58 @@ export default function DataEntry({ isAdmin = false }) {
     }
   }, [fileId, schema])
 
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = () => dirtyIds.current.size > 0
+
+  // Handle navigation with unsaved changes warning
+  const handleNavigateWithWarning = (destination) => {
+    if (hasUnsavedChanges()) {
+      setPendingNavigation(destination)
+      setShowUnsavedWarning(true)
+    } else {
+      navigate(destination)
+    }
+  }
+
+  // Confirm discard changes and navigate
+  const confirmDiscardChanges = () => {
+    setShowUnsavedWarning(false)
+    if (pendingNavigation) {
+      navigate(pendingNavigation)
+    }
+  }
+
+  // Cancel navigation
+  const cancelNavigation = () => {
+    setShowUnsavedWarning(false)
+    setPendingNavigation(null)
+  }
+
+  // Warn when leaving page with unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasUnsavedChanges()) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
+
   const columnDefs = useMemo(
-    () => buildColumnDefs(schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds, handleCopyRecord),
-    [schema, isAdmin, currentUserId, handleDeleteRecord, newRecordIds, handleCopyRecord],
+    () => buildColumnDefs(
+      schema,
+      isAdmin,
+      currentUserId,
+      currentUserRole,
+      currentUserGroup,
+      handleDeleteRecord,
+      newRecordIds,
+      handleCopyRecord,
+    ),
+    [schema, isAdmin, currentUserId, currentUserRole, currentUserGroup, handleDeleteRecord, newRecordIds, handleCopyRecord],
   )
 
   const defaultColDef = useMemo(() => ({
@@ -677,7 +788,9 @@ export default function DataEntry({ isAdmin = false }) {
   async function handleAddRecord() {
     setAddRecordError(null)
     try {
-      const newRecord = await addNewRecord(fileId)
+      const newRecord = isAdmin
+        ? await createAdminRecord(fileId, 'ADMIN', 'ALL', {})
+        : await addNewRecord(fileId)
       // Default the vetting-status field for new records.
       if (!newRecord.data) newRecord.data = {}
 
@@ -765,13 +878,9 @@ export default function DataEntry({ isAdmin = false }) {
         const payloadItem = {
           id: r.id,
           owner: r.owner,
+          group: r.group,
           record_status: r.record_status,
           data: normalizedData,
-        }
-
-        // For admin: include vetter field if present
-        if (isAdmin && r.vetter !== undefined) {
-          payloadItem.vetter = r.vetter
         }
 
         return payloadItem
@@ -878,7 +987,7 @@ export default function DataEntry({ isAdmin = false }) {
       <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate(isAdmin ? '/admin/dashboard' : '/dashboard')}
+            onClick={() => handleNavigateWithWarning(isAdmin ? '/admin/dashboard' : '/dashboard')}
             className="text-sm text-gray-500 hover:text-gray-700"
           >
             ← Back
@@ -889,14 +998,12 @@ export default function DataEntry({ isAdmin = false }) {
           </h2>
         </div>
         <div className="flex items-center gap-2">
-          {!isAdmin && (
-            <button
-              onClick={handleAddRecord}
-              className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              + Add Record
-            </button>
-          )}
+          <button
+            onClick={handleAddRecord}
+            className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            + Add Record
+          </button>
           <button
             onClick={handleSubmit}
             disabled={submitting}
@@ -972,6 +1079,32 @@ export default function DataEntry({ isAdmin = false }) {
           rowData={rowData}
         />
       </div>
+
+      {/* Unsaved changes warning dialog */}
+      {showUnsavedWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Unsaved Changes</h3>
+            <p className="text-gray-600 mb-6">
+              You have unsaved changes. If you go back now, your changes will be lost.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={cancelNavigation}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                No, Keep Editing
+              </button>
+              <button
+                onClick={confirmDiscardChanges}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                Yes, Discard Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

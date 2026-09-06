@@ -4,8 +4,12 @@ admin_pass: "password"
 backup_dir: "./backups"
 auto_logout_minutes: 30  # Optional, defaults to 30
 
+# Admin login IP allowlist. Each entry is an IPv4 pattern where '*' is a wildcard octet.
+# Examples: "192.168.1.*" (single subnet), "10.0.*.*" (wider range), "*.*.*.*" (any IP).
+admin_allowed_ips:
+  - "*.*.*.*"
+
 # PIN authentication settings
-user_domain: "example.com"
 pin_expiration_minutes: 15
 
 # SMTP configuration

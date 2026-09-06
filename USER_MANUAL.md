@@ -33,9 +33,11 @@ Welcome to ConduVet! This manual will guide you through all the features of the 
 ### First Time Login
 
 1. Navigate to the ConduVet login page
-2. Enter your **User ID** and **Password**
-3. Click **Login**
-4. You will be redirected to the main dashboard
+2. Enter your **User ID**
+3. Choose **PIN login** or **Password login**
+4. If using PIN login, the PIN is sent to the email address listed for your user in `users.csv`
+5. Enter the PIN or your password to continue
+6. You will be redirected to the main dashboard
 
 ---
 
@@ -124,7 +126,7 @@ The context panel is split into two columns:
 2. A new empty row is added to the grid
 3. The new record will be:
    - Owned by you
-   - Assigned a vetter automatically
+   - Assigned to your group
    - Set to **New** status
    - **Vetted** checkbox set to unchecked (false)
 
@@ -134,9 +136,10 @@ The context panel is split into two columns:
 3. All data fields are copied from the source record
 4. The new record will be:
    - Owned by you
+   - Assigned to your group
    - Set to **New** status
-   - **Vetted** checkbox set to unchecked (false) even if the source was vetted
-   - The vetter will be assigned automatically (may differ from the source record's vetter)
+    - **Vetted** checkbox set to unchecked (false) even if the source was vetted
+   - The vetter group comes from the source record's group
 
 ### Editing Existing Records
 
@@ -147,6 +150,7 @@ The context panel is split into two columns:
 **You can only edit records where:**
 - You are the **owner** of the record (you created it), OR
 - The record's **Owner** is `ALL` (shared records)
+- If you are a vetter, the record's **Group** matches your group, OR the record's **Group** is `ALL`
 
 **You cannot edit:**
 - Records locked by another user
@@ -155,7 +159,7 @@ The context panel is split into two columns:
 
 ### Deleting a Record
 
-Only the **assigned vetter** of a record can delete it. A confirmation prompt is shown before deletion. Deletions are recorded in the edit history.
+Only a **vetter for that record's group** can delete it. A confirmation prompt is shown before deletion. Deletions are recorded in the edit history.
 
 ---
 
@@ -166,14 +170,14 @@ Only the **assigned vetter** of a record can delete it. A confirmation prompt is
 | Role | What they can do |
 |---|---|
 | **Record Owner** | Create and edit their own records; change Record Status when not vetted |
-| **Record Vetter** | Edit all fields; check/uncheck Vetted; delete records assigned to them |
+| **Vetter** | Edit all fields for records in their group; check/uncheck Vetted; delete records in their group |
 | **Admin** | Full access to all records and fields |
 
 ### The Vetted Checkbox
 
-The **Vetted** column is a checkbox that the assigned vetter uses to mark a record as approved.
+The **Vetted** column is a checkbox that the vetter for that record's group uses to mark a record as approved.
 
-- **Only the assigned vetter** can check or uncheck this box
+- **Only the matching vetter** can check or uncheck this box
 - The owner sees this as read-only
 
 ### Vetted-Lock (Owner Restriction)
@@ -182,7 +186,7 @@ When the vetter checks **Vetted = true**, the record is locked for the **owner**
 
 - The owner **cannot edit any fields** while the record is vetted
 - All cells appear **grayed out** for the owner
-- The vetter retains full edit access
+- The vetter retains full edit access for records in their group
 - The admin retains full edit access
 
 **To allow the owner to edit again**, the vetter simply unchecks the **Vetted** checkbox.
@@ -191,9 +195,9 @@ When the vetter checks **Vetted = true**, the record is locked for the **owner**
 
 You can:
 - **Check or uncheck Vetted** to approve or re-open a record
-- **Edit all fields**, including fields the owner cannot edit while vetted
-- **Edit Record Status** at any time
-- **Delete records** that are assigned to you
+- **Edit all fields**, including fields the owner cannot edit while vetted, for records in your group
+- **Edit Record Status** at any time for records in your group
+- **Delete records** in your group
 
 ### If You Are the Record Owner
 
@@ -206,7 +210,7 @@ You can:
 You **cannot**:
 - Change the Vetted checkbox
 - Edit any field when the record is vetted
-- Delete records (only the vetter can do this)
+- Delete records unless you are also a vetter for that record's group
 
 ---
 
@@ -219,11 +223,11 @@ The **Record Status** column reflects the lifecycle state of each record:
 | `New` | Newly created record |
 | `Updated` | Record has been edited since upload |
 | `Old` | Existing record from the original dataset, not yet changed |
-| `Delete` | Marked for deletion |
+| `Archived` | Record marked as archived |
 
 **Who can change Record Status:**
 - **Owner**: Can edit Record Status only when the record is **not vetted** (Vetted = false)
-- **Vetter**: Can always edit Record Status, even when the record is vetted
+- **Vetter**: Can always edit Record Status for records in their group, even when the record is vetted
 - **Admin**: Can always edit Record Status
 
 Record Status changes are tracked in the **edit history**, visible in the context panel.
@@ -250,7 +254,7 @@ Some fields may be marked as **protected** by your administrator. Protected fiel
 - Only your vetter or the administrator can modify protected fields after submission
 
 **For vetters and admins:**
-- Vetters and admins have **full edit access** to all fields, including protected ones, at any time
+- Vetters and admins have **full edit access** to protected fields when they are allowed to view the record
 - There are no restrictions based on protection status for these roles
 
 ### Validation of Protected Fields
@@ -276,7 +280,7 @@ Protected fields follow special validation rules:
 
 ### Getting Help with Protected Fields
 
-If you need to modify a protected field on an existing record, contact your vetter or administrator. They can make the change for you.
+If you need to modify a protected field on an existing record, contact the vetter for that record's group or an administrator. They can make the change for you.
 
 ---
 
@@ -379,7 +383,7 @@ Date and datetime fields expect a specific format. The format is shown in the fi
 
 ### Vetted-Lock on Submit
 
-If you are a record **owner** and attempt to submit changes to a record that has been vetted (Vetted = true), the submission will be rejected. You will see a per-record error. Ask your vetter to unmark the record before making further edits.
+If you are a record **owner** and attempt to submit changes to a record that has been vetted (Vetted = true), the submission will be rejected. You will see a per-record error. Ask the vetter for that record's group to unmark it before making further edits.
 
 ### After Submit
 
@@ -493,13 +497,13 @@ For fields that accept multiple values:
 ## Frequently Asked Questions
 
 **Q: Can I delete my own records?**
-No. Only the assigned vetter can delete records. This protects data integrity.
+No. Only a vetter for that record's group can delete records. This protects data integrity.
 
 **Q: Why are all my cells grayed out?**
-The assigned vetter has marked your record as vetted (Vetted = true). You cannot edit any fields until the vetter unchecks that box. Contact your vetter if you need to make changes.
+The vetter for that record's group has marked your record as vetted (Vetted = true). You cannot edit any fields until the vetter unchecks that box. Contact the vetter for that group if you need to make changes.
 
 **Q: Can I edit Record Status when my record is vetted?**
-No. The owner cannot edit Record Status when the record is vetted. The vetter and admin can always edit it.
+No. The owner cannot edit Record Status when the record is vetted. The vetter for that record's group and admin can always edit it.
 
 **Q: What if my session times out while I'm editing?**
 You'll be logged out and unsaved changes will be lost. Submit your changes frequently to avoid this.

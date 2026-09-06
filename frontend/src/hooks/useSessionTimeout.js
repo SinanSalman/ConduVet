@@ -21,6 +21,9 @@ export function useSessionTimeout(timeoutMinutes = 30) {
       return // Don't set up listeners if no one is logged in
     }
 
+    const isAdminSession = Boolean(adminToken)
+    const isUserSession = !isAdminSession && Boolean(userToken)
+
     let inactivityTimer
 
     const resetInactivityTimer = () => {
@@ -29,13 +32,14 @@ export function useSessionTimeout(timeoutMinutes = 30) {
 
       // Set new timer for logout
       inactivityTimer = setTimeout(() => {
-        // Determine which token to clear based on what's available
-        if (getAdminToken()) {
+        // Determine which token to clear based on the session that started the timer
+        if (isAdminSession) {
           clearAdminToken()
-        } else if (getUserToken()) {
+        }
+        if (isUserSession) {
           clearUserToken()
         }
-        navigate('/login')
+        navigate(isAdminSession ? '/admin/login' : '/login', { replace: true })
       }, timeoutMinutes * 60 * 1000)
     }
 

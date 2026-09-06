@@ -2,16 +2,28 @@
 Data router — /api/* (user-facing endpoints)
 """
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import Session
 
+logger = logging.getLogger("conduvet")
+
 from auth.jwt import get_current_user
 from database import get_db
 from models.db_models import AppConfig, AppUser, DataFile, DataRecord, FieldHistory, SchemaDefinition
 from routers._helpers import log_field_changes as _log_field_changes, record_to_response as _record_to_response_base
+from services.access_control import (
+    get_user_group,
+    get_user_profile,
+    get_user_role,
+    normalize_tag,
+    record_visible_to_user,
+    user_can_delete_record,
+    user_can_vet_record,
+)
 from services.schema_parser import validate_cell
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -163,23 +175,23 @@ def get_user_records(
     db: Session = Depends(get_db),
 ):
     userid = current_user["sub"].upper()
+    user = get_user_profile(db, userid)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    user_group = normalize_tag(user.group_name)
+    user_role = get_user_role(db, userid)
 
     records = (
         db.query(DataRecord)
-        .filter(
-            DataRecord.file_id == file_id,
-            or_(
-                # owner matches current user (case-insensitive, stored uppercase)
-                # OR owner is "ALL" (shared records visible to everyone)
-                DataRecord.owner.in_([userid, "ALL"]),
-                # OR the current user is the assigned vetter for this record
-                DataRecord.vetter == userid,
-            ),
-        )
+        .filter(DataRecord.file_id == file_id)
         .order_by(DataRecord.id)
         .all()
     )
-    return [_record_to_response(r) for r in records]
+    return [
+        _record_to_response(r)
+        for r in records
+        if record_visible_to_user(r, userid, user_group, user_role)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -201,54 +213,13 @@ def create_new_record(
         raise HTTPException(status_code=404, detail="File not found")
 
     userid = current_user["sub"].upper()
+    user_group = get_user_group(db, userid)
     now = datetime.now(timezone.utc)
-
-    # Auto-assign to the vetter with the fewest records in this file
-    # Get unique vetters from existing records (vetter is a system column, not in record_data)
-    assigned_vetter = None
-
-    # Query all records with assigned vetters in this file
-    existing_vetters = (
-        db.query(DataRecord.vetter)
-        .filter(
-            and_(
-                DataRecord.file_id == file_id,
-                DataRecord.vetter.isnot(None)
-            )
-        )
-        .distinct()
-        .all()
-    )
-
-    if existing_vetters:
-        # For each vetter, count how many records they're assigned to
-        vetter_counts = []
-        for vetter_row in existing_vetters:
-            vetter_id = vetter_row[0]
-            count = db.query(func.count(DataRecord.id)).filter(
-                and_(
-                    DataRecord.file_id == file_id,
-                    DataRecord.vetter == vetter_id
-                )
-            ).scalar() or 0
-            vetter_counts.append((vetter_id, count))
-
-        # Pick the vetter with the fewest records
-        if vetter_counts:
-            assigned_vetter = min(vetter_counts, key=lambda x: x[1])[0]
-    else:
-        # No vetters found in the dataset; use the admin account as the default vetter
-        app_config = db.query(AppConfig).order_by(AppConfig.id.desc()).first()
-        if app_config:
-            admin_userid = app_config.admin_account.upper()
-            admin_user = db.query(AppUser).filter(AppUser.userid == admin_userid).first()
-            if admin_user:
-                assigned_vetter = admin_user.userid
 
     record = DataRecord(
         file_id=file_id,
         owner=userid,
-        vetter=assigned_vetter,
+        group_name=user_group,
         record_data={},
         record_status="New",
         last_updated=now,
@@ -272,6 +243,7 @@ def create_new_record(
         db.refresh(record)
     except Exception:
         db.rollback()
+        logger.exception("Failed to create record for file_id=%d", file_id)
         raise HTTPException(status_code=500, detail="Failed to create record. Please try again.")
     return _record_to_response(record)
 
@@ -296,6 +268,8 @@ def submit_records(
     Returns 422 with field-level errors on validation failure.
     """
     userid = current_user["sub"].upper()
+    user_role = get_user_role(db, userid)
+    user_group = get_user_group(db, userid)
 
     # Load schema once
     schemas = (
@@ -324,19 +298,14 @@ def submit_records(
         data = submission.get("data", {})
 
         record = records_by_id.get(record_id)
-        # Determine if the current user is the vetter for this record.
-        # Vetters may set the vetting status; owners may not — so skip vetting
-        # status validation for owners (the backend will preserve the stored value).
-        is_vetter = (
-            record is not None
-            and bool(record.vetter)
-            and record.vetter.upper() == userid
-        )
+        if record is not None and not record_visible_to_user(record, userid, user_group, user_role):
+            continue
+        can_vet = record is not None and user_can_vet_record(record, userid, user_group, user_role)
 
         # Vetted-lock: once the vetter marks the record as vetted, the owner
         # may no longer submit changes. Only the vetter (who can also unset
         # `vetted`) can edit a vetted record.
-        if record is not None and not is_vetter and _is_record_vetted(record):
+        if record is not None and not can_vet and _is_record_vetted(record):
             field_errors[str(record_id)] = {
                 "_record": (
                     "This record has been marked as vetted by the vetter and is "
@@ -346,7 +315,7 @@ def submit_records(
             continue
 
         # Field-level protection: check if owner is trying to edit protected fields on existing records
-        if record is not None and not is_vetter and record.record_status != "New":
+        if record is not None and not can_vet and record.record_status != "New":
             for field_name, new_val in data.items():
                 schema_def = schema_by_name.get(field_name)
                 if schema_def and schema_def.is_protected:
@@ -364,13 +333,13 @@ def submit_records(
         for field_name, schema_def in schema_by_name.items():
             # Skip vetting status validation when the submitter is not the vetter —
             # the backend will restore the existing value, so the submitted one is ignored.
-            if field_name.lower() in _VETTING_STATUS_FIELDS and not is_vetter:
+            if field_name.lower() in _VETTING_STATUS_FIELDS and not can_vet:
                 continue
 
             # Skip validation for protected fields on existing records (after submission).
             # Protected fields are validated at entry time, but once submitted on existing
             # records, they become read-only and don't need re-validation.
-            if record is not None and record.record_status != "New" and schema_def.is_protected and not is_vetter:
+            if record is not None and record.record_status != "New" and schema_def.is_protected and not can_vet:
                 continue
 
             value = data.get(field_name)
@@ -390,7 +359,7 @@ def submit_records(
     # --- Persist pass -------------------------------------------------------
     # Fields that live as proper DB columns, not inside record_data JSONB.
     # Strip them from data submissions to prevent stale values in JSONB.
-    _SYSTEM_DATA_FIELDS = {"owner", "vetter", "record vetter", "last updated"}
+    _SYSTEM_DATA_FIELDS = {"owner", "group", "vetter", "record vetter", "last updated"}
 
     saved = 0
     saved_record_ids = []  # Track which records were successfully saved for unlocking
@@ -405,10 +374,9 @@ def submit_records(
             continue
 
         # Determine access: user must be the owner or an assigned vetter.
-        user_is_owner = record.owner in (userid, "ALL")
-        user_is_vetter = bool(record.vetter) and record.vetter.upper() == userid
-        if not user_is_owner and not user_is_vetter:
+        if not record_visible_to_user(record, userid, user_group, user_role):
             continue
+        can_vet = user_can_vet_record(record, userid, user_group, user_role)
 
         new_data = dict(submission.get("data", {}))
 
@@ -419,7 +387,7 @@ def submit_records(
 
         # Only the assigned vetter may change the vetting status field.
         # If the submitter is NOT the vetter, silently preserve the existing value.
-        if not user_is_vetter:
+        if not can_vet:
             existing_vetting = (record.record_data or {}).get(
                 next((k for k in (record.record_data or {})
                       if k.lower() in _VETTING_STATUS_FIELDS), None)
@@ -465,6 +433,7 @@ def submit_records(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("Failed to save records for file_id=%d", file_id)
         raise HTTPException(status_code=500, detail="Failed to save records. Please try again.")
 
     # Unlock records after successful submission.
@@ -509,9 +478,9 @@ def get_field_history(
         raise HTTPException(status_code=404, detail="Record not found")
 
     userid = current_user["sub"].upper()
-    user_is_owner = record.owner in (userid, "ALL")
-    user_is_vetter = bool(record.vetter) and record.vetter.upper() == userid
-    if not user_is_owner and not user_is_vetter:
+    user_group = get_user_group(db, userid)
+    user_role = get_user_role(db, userid)
+    if not record_visible_to_user(record, userid, user_group, user_role) and not user_can_vet_record(record, userid, user_group, user_role):
         raise HTTPException(status_code=403, detail="Access denied")
 
     history = (
@@ -579,16 +548,16 @@ def lock_record(
         raise HTTPException(status_code=404, detail="Record not found")
 
     userid = user["sub"].upper()
+    user_group = get_user_group(db, userid)
+    user_role = get_user_role(db, userid)
 
-    # Check permissions: user must be owner or vetter
-    user_is_owner = record.owner in (userid, "ALL")
-    user_is_vetter = bool(record.vetter) and record.vetter.upper() == userid
-    if not user_is_owner and not user_is_vetter:
+    # Check permissions: user must be an owner, a vetter for the same group, or admin.
+    if not record_visible_to_user(record, userid, user_group, user_role) and not user_can_vet_record(record, userid, user_group, user_role):
         raise HTTPException(status_code=403, detail="You don't have permission to lock this record")
 
     # Vetted-lock: owners cannot lock (and therefore cannot edit) a record that
-    # the vetter has already marked as vetted. The vetter must unset 'Vetted' first.
-    if user_is_owner and not user_is_vetter and _is_record_vetted(record):
+    # a vetter has already marked as vetted. The vetter must unset 'Vetted' first.
+    if not user_can_vet_record(record, userid, user_group, user_role) and _is_record_vetted(record):
         raise HTTPException(
             status_code=423,
             detail="This record has been marked as vetted and is locked. Ask the vetter to unset 'Vetted' before editing.",
@@ -610,6 +579,7 @@ def lock_record(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("Failed to lock record_id=%d for user %s", record_id, userid)
         raise HTTPException(status_code=500, detail="Failed to lock record. Please try again.")
 
     return {"ok": True, "locked_by": userid}
@@ -655,6 +625,7 @@ def unlock_record(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("Failed to unlock record_id=%d for user %s", record_id, userid)
         raise HTTPException(status_code=500, detail="Failed to unlock record. Please try again.")
 
     return {"ok": True}
@@ -687,7 +658,6 @@ def get_file_locks(
             "locked_by": r.locked_by,
             "locked_at": r.locked_at.isoformat() if r.locked_at else None,
             "is_vetted": _is_record_vetted(r),
-            "vetter": r.vetter,
         }
         for r in locked_records
     ]
@@ -701,11 +671,14 @@ def delete_record(
     db: Session = Depends(get_db),
 ):
     """
-    Delete a record. Only the assigned vetter can delete a record.
+    Delete a record.
+    - Owners may delete their own records.
+    - Vetters may delete records in their group.
+    - Admins may delete any record.
 
     Returns:
         - 200: Record deleted
-        - 403: User is not the assigned vetter
+        - 403: User is not authorised to delete this record
         - 404: Record not found
     """
     record = (
@@ -717,19 +690,14 @@ def delete_record(
         raise HTTPException(status_code=404, detail="Record not found")
 
     userid = current_user["sub"].upper()
+    is_admin = current_user.get("scope") == "admin"
+    user_group = get_user_group(db, userid)
+    user_role = get_user_role(db, userid)
 
-    # Only the assigned vetter can delete the record
-    if not record.vetter:
+    if not user_can_delete_record(record, userid, user_group, user_role, is_admin=is_admin):
         raise HTTPException(
             status_code=403,
-            detail="This record has no assigned vetter. Only the assigned vetter can delete a record.",
-        )
-
-    vetter_upper = record.vetter.strip().upper() if record.vetter else None
-    if vetter_upper != userid:
-        raise HTTPException(
-            status_code=403,
-            detail="You may only delete records assigned to you as a vetter.",
+            detail="You are not authorised to delete this record.",
         )
 
     # Log a deletion event before removing the record.
@@ -751,6 +719,7 @@ def delete_record(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("Failed to delete record_id=%d for user %s", record_id, userid)
         raise HTTPException(status_code=500, detail="Failed to delete record. Please try again.")
 
     return {"ok": True, "deleted_record_id": record_id}

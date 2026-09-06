@@ -2,7 +2,10 @@
 Email service for ConduVet PIN authentication.
 """
 
+import logging
 from typing import Callable, Dict, Any
+
+logger = logging.getLogger("conduvet")
 
 
 def send_pin_email(
@@ -40,5 +43,5 @@ If you did not request this PIN, please ignore this email.
         send_email_func(to_email, subject, text_body)
         return True
     except Exception as e:
-        print(f"Failed to send PIN email: {e}")
+        logger.exception(f"Failed to send PIN email to {to_email} for user {userid}")
         return False

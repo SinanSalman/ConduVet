@@ -31,7 +31,8 @@ export default function AdminSetup() {
       form.append('yaml_file', yamlFile)
       form.append('users_file', usersFile)
       await adminSetup(form)
-      navigate('/admin/login')
+      // Reload page to refresh configured status and route guards
+      window.location.href = '/admin/login'
     } catch (err) {
       const detail = err.response?.data?.detail
       setError(

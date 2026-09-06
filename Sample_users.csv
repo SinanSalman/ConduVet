@@ -1,4 +1,4 @@
-userid,name,password
-user1,Firstname Lastname (user1),password1
-user2,Firstname Lastname (user2),password2
-vetter,Vetting User,password3
+userid,name,password,email,Role,Group
+user1,Firstname Lastname (user1),password1,test1@example.com,Normal,G1
+user2,Firstname Lastname (user2),password2,test2@example.com,Normal,G2
+vetter,Firstname Lastname (vetter),password3,test3@example.com,Vetter,G1

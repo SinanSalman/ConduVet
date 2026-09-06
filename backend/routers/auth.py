@@ -18,7 +18,9 @@ from auth.ldap_stub import auth_provider
 from database import get_db
 from models.db_models import AppUser, AppConfig, UserSession
 from rate_limiter import limiter
+from services.access_control import get_user_email, get_user_group, get_user_role
 from services.email_service import send_pin_email
+from services.session_service import logout_authenticated_session
 
 logger = logging.getLogger("conduvet")
 
@@ -64,24 +66,30 @@ async def user_login(
         )
 
     # Create a user session record (best-effort; continue even if it fails)
+    session_id = None
     try:
-        session = UserSession(userid=user.userid)
+        session = UserSession(userid=user.userid, last_activity=datetime.now(timezone.utc))
         db.add(session)
+        db.flush()
+        session_id = session.id
         db.commit()
     except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
+        session_id = None
         # Session creation failed, but authentication succeeded. Log it but don't fail.
         logger.warning(f"Failed to create UserSession for user {user.userid}: {e}")
 
-    token = create_access_token(
-        data={"sub": user.userid, "scope": "user"},
-        expires_delta=timedelta(hours=8),
-    )
+    token_data = {"sub": user.userid, "scope": "user"}
+    if session_id is not None:
+        token_data["sid"] = session_id
+    token = create_access_token(data=token_data, expires_delta=timedelta(hours=8))
     return {
         "access_token": token,
         "token_type": "bearer",
         "name": user.name,
         "userid": user.userid,
+        "role": get_user_role(db, user.userid),
+        "group": get_user_group(db, user.userid),
     }
 
 
@@ -111,7 +119,7 @@ async def request_pin(
             detail="User not found",
         )
 
-    # Get app config for USER_DOMAIN and PIN_EXPIRATION_MINUTES
+    # Get app config for PIN_EXPIRATION_MINUTES
     config = db.query(AppConfig).first()
     if config is None:
         raise HTTPException(
@@ -119,7 +127,6 @@ async def request_pin(
             detail="Application not configured",
         )
 
-    user_domain = os.getenv("USER_DOMAIN", config.user_domain or "example.com")
     pin_expiration_minutes = int(
         os.getenv("PIN_EXPIRATION_MINUTES", str(config.pin_expiration_minutes or 15))
     )
@@ -131,8 +138,14 @@ async def request_pin(
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=pin_expiration_minutes)
 
+    email = get_user_email(db, userid)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No email address is configured for this user",
+        )
+
     # Store PIN in memory (overwrites any existing PIN for this user)
-    email = f"{userid.lower()}@{user_domain}"
     _pin_store[userid] = {
         "pin": pin_code,
         "expires_at": expires_at,
@@ -150,7 +163,8 @@ async def request_pin(
         )
 
     # Mask email for response (e.g., "u***@example.com")
-    masked_email = f"{email[0]}***@{email.split('@')[1]}"
+    local_part, _, domain_part = email.partition("@")
+    masked_email = f"{local_part[:1] if local_part else '*'}***@{domain_part}" if domain_part else "***"
 
     return {
         "message": "PIN sent to email",
@@ -214,26 +228,32 @@ async def verify_pin(
         )
 
     # Create a user session record (best-effort; continue even if it fails)
+    session_id = None
     try:
-        session = UserSession(userid=user.userid)
+        session = UserSession(userid=user.userid, last_activity=datetime.now(timezone.utc))
         db.add(session)
+        db.flush()
+        session_id = session.id
         db.commit()
     except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
+        session_id = None
         # Session creation failed, but authentication succeeded. Log it but don't fail.
         logger.warning(f"Failed to create UserSession for user {user.userid}: {e}")
 
     # Create JWT token
-    token = create_access_token(
-        data={"sub": user.userid, "scope": "user"},
-        expires_delta=timedelta(hours=8),
-    )
+    token_data = {"sub": user.userid, "scope": "user"}
+    if session_id is not None:
+        token_data["sid"] = session_id
+    token = create_access_token(data=token_data, expires_delta=timedelta(hours=8))
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "name": user.name,
         "userid": user.userid,
+        "role": get_user_role(db, user.userid),
+        "group": get_user_group(db, user.userid),
     }
 
 
@@ -252,18 +272,10 @@ def user_logout(
             detail="Could not determine user ID",
         )
 
-    # Mark the most recent session as logged out (best-effort; continue even if it fails)
+    # Mark the session tied to this token as logged out.
     try:
-        session_record = (
-            db.query(UserSession)
-            .filter(UserSession.userid == userid, UserSession.logout_at.is_(None))
-            .order_by(UserSession.login_at.desc())
-            .first()
-        )
-
-        if session_record:
-            session_record.logout_at = datetime.now(timezone.utc)
-            db.commit()
+        if logout_authenticated_session(db, current_user):
+            return {"message": "Logged out successfully"}
     except (sqlalchemy_exc.SQLAlchemyError, sqlalchemy_exc.IntegrityError) as e:
         db.rollback()
         # Session logout failed, but still return success

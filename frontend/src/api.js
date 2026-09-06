@@ -5,6 +5,8 @@ const USER_TOKEN_KEY  = 'conduvet_token'
 const ADMIN_TOKEN_KEY = 'conduvet_admin_token'
 const USER_ID_KEY     = 'conduvet_user_id'
 const USER_NAME_KEY   = 'conduvet_user_name'
+const USER_ROLE_KEY   = 'conduvet_user_role'
+const USER_GROUP_KEY  = 'conduvet_user_group'
 const TITLE_KEY       = 'conduvet_title'
 
 // ── App title helpers ─────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ export function clearUserToken() {
   localStorage.removeItem(USER_TOKEN_KEY)
   localStorage.removeItem(USER_NAME_KEY)
   localStorage.removeItem(USER_ID_KEY)
+  localStorage.removeItem(USER_ROLE_KEY)
+  localStorage.removeItem(USER_GROUP_KEY)
 }
 
 export function getUserId() {
@@ -50,6 +54,20 @@ export function setUserName(name) {
   localStorage.setItem(USER_NAME_KEY, name)
 }
 
+export function getUserRole() {
+  return localStorage.getItem(USER_ROLE_KEY) || 'Normal'
+}
+export function setUserRole(role) {
+  localStorage.setItem(USER_ROLE_KEY, role || 'Normal')
+}
+
+export function getUserGroup() {
+  return localStorage.getItem(USER_GROUP_KEY) || 'ALL'
+}
+export function setUserGroup(group) {
+  localStorage.setItem(USER_GROUP_KEY, group || 'ALL')
+}
+
 export function getAdminToken() {
   return localStorage.getItem(ADMIN_TOKEN_KEY)
 }
@@ -62,7 +80,7 @@ export function clearAdminToken() {
 
 /** Clear every conduvet key from localStorage (used after a full reset). */
 export function clearAllLocalStorage() {
-  ;[USER_TOKEN_KEY, ADMIN_TOKEN_KEY, USER_ID_KEY, USER_NAME_KEY, TITLE_KEY].forEach(k =>
+  ;[USER_TOKEN_KEY, ADMIN_TOKEN_KEY, USER_ID_KEY, USER_NAME_KEY, USER_ROLE_KEY, USER_GROUP_KEY, TITLE_KEY].forEach(k =>
     localStorage.removeItem(k)
   )
 }
@@ -187,6 +205,15 @@ export async function getAdminSchema(fileId) {
 
 export async function getAdminRecords(fileId) {
   const res = await adminApi.get(`/admin/files/${fileId}/records`)
+  return res.data
+}
+
+export async function createAdminRecord(fileId, owner = 'ADMIN', groupName = 'ALL', recordData = {}) {
+  const res = await adminApi.post(`/admin/files/${fileId}/records`, {
+    owner,
+    group_name: groupName,
+    record_data: recordData
+  })
   return res.data
 }
 

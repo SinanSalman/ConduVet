@@ -10,7 +10,7 @@ import UserLogin from './pages/UserLogin'
 import UserDashboard from './pages/UserDashboard'
 import DataEntry from './pages/DataEntry'
 
-const APP_VERSION = '0.1'
+const APP_VERSION = '0.2'
 const GITHUB_URL  = 'https://github.com/SinanSalman/ConduVet'
 
 // ── Route guards ──────────────────────────────────────────────────────────────
@@ -24,6 +24,16 @@ function RequireUser({ children }) {
 function RequireAdmin({ children }) {
   const token = getAdminToken()
   if (!token) return <Navigate to="/admin/login" replace />
+  return children
+}
+
+function RequireNotConfigured({ children, configured }) {
+  if (configured) return <Navigate to="/admin/login" replace />
+  return children
+}
+
+function RequireConfigured({ children, configured }) {
+  if (!configured) return <Navigate to="/admin/setup" replace />
   return children
 }
 
@@ -82,12 +92,18 @@ export default function App() {
   useEffect(() => {
     checkConfigured()
       .then(data => setConfigured(data.configured))
-      .catch(() => setConfigured(true)) // can't reach backend — don't block UI
+      .catch((err) => {
+        console.error('Failed to check configuration status:', err)
+        setConfigured(false)
+      })
 
     // Fetch auto-logout timeout from config
     getAutoLogoutMinutes()
       .then(mins => setAutoLogoutMinutes(mins))
-      .catch(() => {}) // Use default if fetch fails
+      .catch((err) => {
+        console.error('Failed to load auto-logout timeout, using default of 30 minutes:', err)
+        // Use default (30) if fetch fails
+      })
   }, [])
 
   // Listen for title changes fired by setAppTitle() in the same tab,
@@ -161,19 +177,31 @@ export default function App() {
               ? <Navigate to="/admin/dashboard" replace />
               : <Navigate to="/admin/login" replace />
           } />
-          <Route path="/admin/setup" element={<AdminSetup />} />
-          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/setup" element={
+            <RequireNotConfigured configured={configured}>
+              <AdminSetup />
+            </RequireNotConfigured>
+          } />
+          <Route path="/admin/login" element={
+            <RequireConfigured configured={configured}>
+              <AdminLogin />
+            </RequireConfigured>
+          } />
           <Route path="/admin/dashboard" element={
-            <RequireAdmin>
-              <div className="h-full overflow-y-auto">
-                <AdminDashboard />
-              </div>
-            </RequireAdmin>
+            <RequireConfigured configured={configured}>
+              <RequireAdmin>
+                <div className="h-full overflow-y-auto">
+                  <AdminDashboard />
+                </div>
+              </RequireAdmin>
+            </RequireConfigured>
           } />
           <Route path="/admin/data/:fileId" element={
-            <RequireAdmin>
-              <DataEntry isAdmin={true} />
-            </RequireAdmin>
+            <RequireConfigured configured={configured}>
+              <RequireAdmin>
+                <DataEntry isAdmin={true} />
+              </RequireAdmin>
+            </RequireConfigured>
           } />
 
           {/* ── 404 fallback ── */}

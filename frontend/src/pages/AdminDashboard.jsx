@@ -289,11 +289,19 @@ function ReportsTab() {
   const [selectedFileId, setSelectedFileId] = useState('')
   const [reportType, setReportType] = useState(null)
   const [showActiveUsers, setShowActiveUsers] = useState(false)
+  const [filesError, setFilesError] = useState(null)
 
   useEffect(() => {
     getAdminFiles()
-      .then(data => { setFiles(data || []) })
-      .catch(() => {})
+      .then(data => {
+        setFiles(data || [])
+        setFilesError(null)
+      })
+      .catch((err) => {
+        console.error('Failed to load files for reports:', err)
+        setFilesError('Failed to load files. Please refresh the page and try again.')
+        setFiles([])
+      })
   }, [])
 
   const FILE_REPORT_TYPES = [
@@ -321,6 +329,11 @@ function ReportsTab() {
       {/* File-specific reports */}
       <div>
         <h4 className="text-sm font-semibold text-gray-700 mb-2">File-Specific Reports</h4>
+        {filesError && (
+          <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 mb-3 text-sm">
+            {filesError}
+          </div>
+        )}
         <div className="flex flex-wrap gap-3 items-center">
           <select
             value={selectedFileId}
@@ -413,6 +426,7 @@ function StatusBanner({ msg, onDismiss }) {
 function ConfigurationTab({ navigate }) {
   const [config, setConfig] = useState(null)
   const [configLoading, setConfigLoading] = useState(true)
+  const [configError, setConfigError] = useState(null)
 
   // Separate state for each update card
   const [yamlFile, setYamlFile]       = useState(null)
@@ -431,9 +445,18 @@ function ConfigurationTab({ navigate }) {
 
   function loadConfig() {
     setConfigLoading(true)
+    setConfigError(null)
     getAdminConfig()
-      .then(data => { setConfig(data); setConfigLoading(false) })
-      .catch(() => setConfigLoading(false))
+      .then(data => {
+        setConfig(data)
+        setConfigLoading(false)
+        setConfigError(null)
+      })
+      .catch((err) => {
+        console.error('Failed to load configuration:', err)
+        setConfigLoading(false)
+        setConfigError('Failed to load configuration. Please refresh and try again.')
+      })
   }
 
   useEffect(() => { loadConfig() }, [])
@@ -525,6 +548,11 @@ function ConfigurationTab({ navigate }) {
       {/* ── Current config display ─────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <h3 className="font-semibold text-gray-700 mb-3">Current Configuration</h3>
+        {configError && (
+          <div className="bg-red-50 border border-red-300 text-red-700 rounded-lg p-3 mb-3 text-sm">
+            {configError}
+          </div>
+        )}
         {configLoading ? (
           <p className="text-gray-400 text-sm">Loading…</p>
         ) : config ? (

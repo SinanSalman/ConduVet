@@ -258,19 +258,51 @@ def _run_migrations():
             )
             conn.commit()
 
-        # Migration 007: add user_domain and pin_expiration_minutes to app_config
+        # Migration 007: add pin_expiration_minutes to app_config
         result = conn.execute(
             text(
                 "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'app_config' AND column_name = 'user_domain'"
+                "WHERE table_name = 'app_config' AND column_name = 'pin_expiration_minutes'"
             )
         )
         if result.fetchone() is None:
             conn.execute(
-                text("ALTER TABLE app_config ADD COLUMN user_domain VARCHAR(255) NOT NULL DEFAULT 'example.com'")
+                text("ALTER TABLE app_config ADD COLUMN pin_expiration_minutes INTEGER NOT NULL DEFAULT 15")
+            )
+            conn.commit()
+
+        # Migration 013: add email and group_name columns to app_users
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'app_users' AND column_name = 'email'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE app_users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''")
             )
             conn.execute(
-                text("ALTER TABLE app_config ADD COLUMN pin_expiration_minutes INTEGER NOT NULL DEFAULT 15")
+                text("ALTER TABLE app_users ADD COLUMN group_name VARCHAR(255) NOT NULL DEFAULT 'ALL'")
+            )
+            conn.execute(
+                text("ALTER TABLE app_users ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'Normal'")
+            )
+            conn.commit()
+
+        # Migration 014: add group_name column to data_records
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'data_records' AND column_name = 'group_name'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE data_records ADD COLUMN group_name VARCHAR(255) NOT NULL DEFAULT 'ALL'")
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_data_records_group_name ON data_records (group_name)")
             )
             conn.commit()
 
@@ -314,8 +346,9 @@ def _run_migrations():
                 text("ALTER TABLE schema_definitions ALTER COLUMN data_type TYPE TEXT")
             )
             conn.commit()
-        except Exception:
+        except Exception as e:
             # Column may already be TEXT or error is benign
+            logger.warning("Migration 010: could not expand data_type column (may already be TEXT): %s", e)
             conn.rollback()
 
         # Migration 011: create user_sessions table for login/logout tracking
@@ -332,9 +365,31 @@ def _run_migrations():
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_userid ON user_sessions(userid)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_logout_at ON user_sessions(logout_at)"))
             conn.commit()
-        except Exception:
+        except Exception as e:
             # Table may already exist
+            logger.warning("Migration 011: could not create user_sessions table (may already exist): %s", e)
             conn.rollback()
+
+        # Migration 012: index last_activity for session-expiration queries
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity)"))
+            conn.commit()
+        except Exception as e:
+            logger.warning("Migration 012: could not create index on user_sessions.last_activity: %s", e)
+            conn.rollback()
+
+        # Migration 015: add admin_allowed_ips to app_config
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'app_config' AND column_name = 'admin_allowed_ips'"
+            )
+        )
+        if result.fetchone() is None:
+            conn.execute(
+                text("ALTER TABLE app_config ADD COLUMN admin_allowed_ips JSONB NOT NULL DEFAULT '[\"*.*.*.*\"]'::jsonb")
+            )
+            conn.commit()
 
 
 _run_migrations()
@@ -345,7 +400,7 @@ _run_migrations()
 app = FastAPI(
     title="ConduVet",
     description="Crowd-sourced tabular data vetting platform",
-    version="1.0.0",
+    version="0.2.0",
 )
 
 # Attach rate limiter and its 429 error handler

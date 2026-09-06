@@ -33,8 +33,10 @@ from models.db_models import (
     SchemaDefinition,
     UserSession,
 )
+from services.access_control import normalize_role, normalize_tag
 from services.excel_service import export_excel, parse_excel
 from services.schema_parser import parse_data_type
+from services.session_service import expire_stale_sessions
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -45,6 +47,25 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ---------------------------------------------------------------------------
 
 REQUIRED_YAML_KEYS = {"title", "admin_account", "admin_pass"}
+
+
+def _ip_matches_pattern(ip: str, pattern: str) -> bool:
+    """Return True if an IPv4 address matches a pattern where '*' is a wildcard octet."""
+    ip_parts = ip.split(".")
+    pattern_parts = pattern.split(".")
+    if len(ip_parts) != 4 or len(pattern_parts) != 4:
+        return False
+    return all(p == "*" or p == i for p, i in zip(pattern_parts, ip_parts))
+
+
+def _ip_allowed(client_ip: str, allowed_patterns: list) -> bool:
+    """Return True if client_ip matches any pattern in allowed_patterns."""
+    if not allowed_patterns:
+        return False
+    # Unwrap IPv4-mapped IPv6 (e.g. "::ffff:10.0.0.1" → "10.0.0.1")
+    if client_ip.startswith("::ffff:"):
+        client_ip = client_ip[7:]
+    return any(_ip_matches_pattern(client_ip, p) for p in allowed_patterns)
 
 
 def _validate_yaml(content: bytes) -> dict:
@@ -115,21 +136,6 @@ def _validate_yaml(content: bytes) -> dict:
     else:
         # Set default if not specified
         data["auto_logout_minutes"] = 30
-
-    # Validate optional user_domain
-    if "user_domain" in data:
-        user_domain = data["user_domain"]
-        if not isinstance(user_domain, str) or not user_domain.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"user_domain must be a non-empty string. "
-                    f"Example: user_domain: \"example.com\""
-                ),
-            )
-        data["user_domain"] = user_domain.strip()
-    else:
-        data["user_domain"] = "example.com"
 
     # Validate optional pin_expiration_minutes
     if "pin_expiration_minutes" in data:
@@ -205,13 +211,13 @@ def _validate_yaml(content: bytes) -> dict:
 
 def _parse_users_csv(content: bytes) -> list[dict]:
     """
-    Parse a users CSV file.  Required columns: userid, name, password.
-    Returns list of dicts with keys: userid (uppercased), name, password.
+    Parse a users CSV file. Required columns: userid, name, password, email, group, role.
+    Returns list of dicts with keys: userid (uppercased), name, password, email, group, role.
     """
     text = content.decode("utf-8-sig").strip()
     reader = csv.DictReader(io.StringIO(text))
     fieldnames_lower = [f.lower() for f in (reader.fieldnames or [])]
-    required = {"userid", "name", "password"}
+    required = {"userid", "name", "password", "email", "group", "role"}
     missing = required - set(fieldnames_lower)
     if missing:
         pretty = ", ".join(f"'{c}'" for c in sorted(missing))
@@ -222,10 +228,10 @@ def _parse_users_csv(content: bytes) -> list[dict]:
                 f"The users CSV is missing required column(s): {pretty}. "
                 f"Column(s) found in the file: {found}. "
                 f"The first row of the CSV must be exactly:\n"
-                f"  userid,name,password\n"
+                f"  userid,name,password,email,group,role\n"
                 f"Example rows:\n"
-                f"  Z1234,Jane Smith,abc123\n"
-                f"  Z5678,John Doe,xyz789\n"
+                f"  Z1234,Jane Smith,abc123,jane.smith@zu.ac.ae,SCIENCE,Vetter\n"
+                f"  Z5678,John Doe,xyz789,john.doe@zu.ac.ae,ALL,Normal\n"
                 f"Note: column names are case-insensitive but must match exactly (no extra spaces)."
             ),
         )
@@ -237,8 +243,18 @@ def _parse_users_csv(content: bytes) -> list[dict]:
         uid = (row_lower.get("userid") or "").strip()
         name = (row_lower.get("name") or "").strip()
         pwd = (row_lower.get("password") or "").strip()
+        email = (row_lower.get("email") or "").strip().lower()
+        group_name = normalize_tag(row_lower.get("group"))
+        role = normalize_role(row_lower.get("role"))
         if uid:
-            users.append({"userid": uid.upper(), "name": name, "password": pwd})
+            users.append({
+                "userid": uid.upper(),
+                "name": name,
+                "password": pwd,
+                "email": email,
+                "group": group_name,
+                "role": role,
+            })
         else:
             skipped += 1
 
@@ -302,9 +318,9 @@ async def setup(
         users_file_path=users_file_path,
         backup_dir=backup_dir,
         auto_logout_minutes=config_data.get("auto_logout_minutes", 30),
-        user_domain=config_data.get("user_domain", "example.com"),
         pin_expiration_minutes=config_data.get("pin_expiration_minutes", 15),
         smtp_config=config_data.get("smtp_config", {}),
+        admin_allowed_ips=config_data.get("admin_allowed_ips", ["*.*.*.*"]),
     )
     db.add(app_config)
 
@@ -312,7 +328,14 @@ async def setup(
     db.query(AppUser).delete()
     for u in users:
         pwd_hash = pwd_context.hash(u["password"]) if u["password"] else pwd_context.hash("")
-        db.add(AppUser(userid=u["userid"], name=u["name"], password_hash=pwd_hash))
+        db.add(AppUser(
+            userid=u["userid"],
+            name=u["name"],
+            email=u["email"],
+            group_name=u["group"],
+            role=u["role"],
+            password_hash=pwd_hash,
+        ))
 
     db.commit()
     return {"ok": True}
@@ -333,6 +356,15 @@ async def admin_login(
     config = db.query(AppConfig).first()
     if config is None:
         raise HTTPException(status_code=503, detail="not_configured")
+
+    client_ip = request.client.host if request.client else ""
+    allowed_ips = config.admin_allowed_ips or ["*.*.*.*"]
+    if not _ip_allowed(client_ip, allowed_ips):
+        logger.warning("Admin login blocked for IP %s", client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin login is not allowed from your IP address.",
+        )
 
     if username != config.admin_account or not pwd_context.verify(
         password, config.admin_pass_hash
@@ -421,7 +453,6 @@ def get_config(
         "users_file_path": config.users_file_path,
         "backup_dir": config.backup_dir,
         "auto_logout_minutes": config.auto_logout_minutes,
-        "user_domain": config.user_domain or "example.com",
         "pin_expiration_minutes": config.pin_expiration_minutes or 15,
         "smtp_config": config.smtp_config or {},
         "created_at": config.created_at.isoformat() if config.created_at else None,
@@ -452,12 +483,12 @@ async def update_config_yaml(
     config.admin_pass_hash = pwd_context.hash(str(config_data["admin_pass"]))
     if "auto_logout_minutes" in config_data:
         config.auto_logout_minutes = config_data["auto_logout_minutes"]
-    if "user_domain" in config_data:
-        config.user_domain = config_data["user_domain"]
     if "pin_expiration_minutes" in config_data:
         config.pin_expiration_minutes = config_data["pin_expiration_minutes"]
     if "smtp_config" in config_data:
         config.smtp_config = config_data["smtp_config"]
+    if "admin_allowed_ips" in config_data:
+        config.admin_allowed_ips = config_data["admin_allowed_ips"]
 
     db.commit()
 
@@ -468,7 +499,6 @@ async def update_config_yaml(
         "title": config.title,
         "admin_account": config.admin_account,
         "auto_logout_minutes": config.auto_logout_minutes,
-        "user_domain": config.user_domain or "example.com",
         "pin_expiration_minutes": config.pin_expiration_minutes or 15,
         "smtp_config": config.smtp_config or {},
     }
@@ -503,7 +533,14 @@ async def update_config_users(
     db.query(AppUser).delete()
     for u in users:
         pwd_hash = pwd_context.hash(u["password"]) if u["password"] else pwd_context.hash("")
-        db.add(AppUser(userid=u["userid"], name=u["name"], password_hash=pwd_hash))
+        db.add(AppUser(
+            userid=u["userid"],
+            name=u["name"],
+            email=u["email"],
+            group_name=u["group"],
+            role=u["role"],
+            password_hash=pwd_hash,
+        ))
 
     db.commit()
     return {"ok": True, "user_count": len(users)}
@@ -580,9 +617,9 @@ async def upload_file(
     db.flush()  # get data_file.id
 
     # Persist schema definitions, excluding system columns.
-    # Owner, Vetter, Last Updated, and Record Status are managed by dedicated DB
+    # Owner, Group, Last Updated, and Record Status are managed by dedicated DB
     # columns; storing them as SchemaDefinitions would cause duplicate grid columns.
-    _SYSTEM_COLS = {"owner", "vetter", "record vetter", "last updated", "record status"}
+    _SYSTEM_COLS = {"owner", "group", "vetter", "record vetter", "last updated", "record status"}
     for s in schema_list:
         if s["field_name"].lower() in _SYSTEM_COLS:
             continue
@@ -602,7 +639,7 @@ async def upload_file(
 
     # Persist data records
     now = datetime.now(timezone.utc)
-    _SYSTEM = {"owner", "vetter", "record vetter", "last updated", "record status", "record id"}
+    _SYSTEM = {"owner", "group", "vetter", "record vetter", "last updated", "record status", "record id"}
     schema_field_names = [
         s["field_name"] for s in schema_list
         if s["field_name"].lower() not in _SYSTEM
@@ -615,9 +652,7 @@ async def upload_file(
         # Extract system columns (case-insensitive key match)
         row_lower = {k.lower(): v for k, v in row.items()}
         owner = str(row_lower.get("owner") or "ALL").strip().upper()
-        # Vetter: stored uppercase like owner; check "record vetter" field; None if not present in the row
-        vetter_raw = row_lower.get("record vetter") or row_lower.get("vetter")
-        vetter = str(vetter_raw).strip().upper() if vetter_raw else None
+        group_name = normalize_tag(row_lower.get("group"))
         last_updated_raw = row_lower.get("last updated")
         record_status_raw = row_lower.get("record status")
         record_status = str(record_status_raw).strip() if record_status_raw else "Unvetted"
@@ -649,7 +684,7 @@ async def upload_file(
         record = DataRecord(
             file_id=data_file.id,
             owner=owner,
-            vetter=vetter,
+            group_name=group_name,
             record_data=record_data,
             record_status=record_status,
             last_updated=last_updated,
@@ -770,6 +805,7 @@ def reset_all_data(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("CRITICAL: Database reset failed - all data deletion unsuccessful")
         raise HTTPException(
             status_code=500,
             detail="Reset failed — the database could not be cleared. Please try again.",
@@ -871,6 +907,54 @@ def get_all_records(
 
 
 # ---------------------------------------------------------------------------
+# POST /files/{file_id}/records — admin auth — create new record
+# ---------------------------------------------------------------------------
+
+@router.post("/files/{file_id}/records")
+def create_admin_record(
+    file_id: int,
+    payload: dict,
+    _admin: dict = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a new empty record. Admin-only operation.
+
+    Request body:
+    {
+      "owner": "USERID" (optional, defaults to "ADMIN"),
+      "group_name": "GROUP" (optional, defaults to "ALL"),
+      "record_data": {} (optional, defaults to empty dict)
+    }
+    """
+    owner = payload.get("owner", "ADMIN")
+    group_name = payload.get("group_name", "ALL")
+    record_data = payload.get("record_data", {})
+
+    if not isinstance(record_data, dict):
+        record_data = {}
+
+    now = datetime.now(timezone.utc)
+    record = DataRecord(
+        file_id=file_id,
+        owner=str(owner).upper(),
+        group_name=normalize_tag(group_name),
+        record_data=record_data,
+        record_status="New",
+        last_updated=now,
+    )
+    db.add(record)
+    try:
+        db.commit()
+        db.refresh(record)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to create record for file_id=%d", file_id)
+        raise HTTPException(status_code=500, detail="Failed to create record. Please try again.")
+
+    return _record_to_response(record)
+
+
+# ---------------------------------------------------------------------------
 # PUT /files/{file_id}/records — admin auth — batch update
 # ---------------------------------------------------------------------------
 
@@ -917,10 +1001,11 @@ def batch_update_records(
             record.record_status = new_status
         if "owner" in update:
             record.owner = str(update["owner"]).upper()
-        # Handle both "vetter" and "record vetter" field names
-        vetter_update = update.get("record vetter") or update.get("vetter")
-        if vetter_update is not None:
-            record.vetter = str(vetter_update).strip().upper() if vetter_update else None
+        if "group" in update or "record group" in update:
+            group_update = update.get("group")
+            if group_update is None:
+                group_update = update.get("record group")
+            record.group_name = normalize_tag(group_update)
         record.last_updated = now
         updated_ids.append(record_id)
 
@@ -928,6 +1013,7 @@ def batch_update_records(
         db.commit()
     except Exception:
         db.rollback()
+        logger.exception("Failed to batch update records for file_id=%d", file_id)
         raise HTTPException(status_code=500, detail="Failed to save records. Please try again.")
     return {"ok": True, "updated": len(updated_ids)}
 
@@ -1216,27 +1302,7 @@ def report_active_users(
     Report of currently logged-in users based on active sessions.
     Shows only users with open sessions (logout_at is NULL).
     """
-    # Get user details map
-    user_map = {u.userid: u.name for u in db.query(AppUser).all()}
-
-    # Find currently active sessions (no logout_at)
-    active_sessions = (
-        db.query(
-            UserSession.userid,
-            func.max(UserSession.login_at).label("login_at"),
-        )
-        .filter(UserSession.logout_at.is_(None))
-        .group_by(UserSession.userid)
-        .order_by(func.max(UserSession.login_at).desc())
-        .all()
-    )
-
-    # Build rows with user info
-    rows = []
-    for userid, login_at in active_sessions:
-        user_name = user_map.get(userid, "Unknown")
-        login_time_str = login_at.strftime("%Y-%m-%d %H:%M:%S") if login_at else "—"
-        rows.append([userid, user_name, login_time_str])
+    rows = _get_active_session_rows(db)
 
     columns = ["User ID", "Name", "Logged In At"]
     return {"columns": columns, "rows": rows}
@@ -1248,27 +1314,7 @@ def report_active_users_download(
     db: Session = Depends(get_db),
 ):
     """Download currently logged-in users report as Excel."""
-    # Get user details map
-    user_map = {u.userid: u.name for u in db.query(AppUser).all()}
-
-    # Find currently active sessions (no logout_at)
-    active_sessions = (
-        db.query(
-            UserSession.userid,
-            func.max(UserSession.login_at).label("login_at"),
-        )
-        .filter(UserSession.logout_at.is_(None))
-        .group_by(UserSession.userid)
-        .order_by(func.max(UserSession.login_at).desc())
-        .all()
-    )
-
-    # Build rows
-    rows = []
-    for userid, login_at in active_sessions:
-        user_name = user_map.get(userid, "Unknown")
-        login_time_str = login_at.strftime("%Y-%m-%d %H:%M:%S") if login_at else "—"
-        rows.append([userid, user_name, login_time_str])
+    rows = _get_active_session_rows(db)
 
     headers = ["User ID", "Name", "Logged In At"]
     xlsx_bytes = _build_report_xlsx(headers, rows)
@@ -1279,3 +1325,30 @@ def report_active_users_download(
     )
 
 
+def _get_active_session_rows(db: Session) -> list[list[str]]:
+    """
+    Return one row per active session.
+
+    The report is session-based, so a user with multiple concurrent logins will
+    appear multiple times. Any expired sessions are first marked as logged out.
+    """
+    expire_stale_sessions(db)
+
+    config = db.query(AppConfig).order_by(AppConfig.id.desc()).first()
+    user_map = {u.userid: u.name for u in db.query(AppUser).all()}
+    if config and config.admin_account:
+        user_map[config.admin_account.upper()] = "Admin"
+
+    active_sessions = (
+        db.query(UserSession.userid, UserSession.login_at)
+        .filter(UserSession.logout_at.is_(None))
+        .order_by(UserSession.login_at.desc())
+        .all()
+    )
+
+    rows = []
+    for userid, login_at in active_sessions:
+        user_name = user_map.get(userid, "Unknown")
+        login_time_str = login_at.strftime("%Y-%m-%d %H:%M:%S") if login_at else "—"
+        rows.append([userid, user_name, login_time_str])
+    return rows

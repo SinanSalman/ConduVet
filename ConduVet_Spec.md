@@ -35,18 +35,34 @@ admin_account: "admin_username"
 admin_pass: "admin_password"
 backup_dir: "./backups"        # local directory for rotating backups
 auto_logout_minutes: 30        # optional; default: 30, range: 1-480 (inactivity timeout)
+
+# Admin login IP allowlist. Each entry is an IPv4 pattern where '*' is a wildcard octet.
+# Examples: "192.168.1.*" (single subnet), "10.0.*.*" (wider range), "*.*.*.*" (any IP).
+admin_allowed_ips:             # optional; default: ["*.*.*.*"] (allow any IP)
+  - "*.*.*.*"
+
+# PIN authentication settings
+pin_expiration_minutes: 15     # optional; default: 15, range: 1-1440 (in minutes)
+
+# SMTP configuration for PIN email delivery
+smtp_config:                   # optional; required for PIN-based email authentication
+  host: "smtp.gmail.com"
+  port: 587
+  username: "email@example.com"
+  password: "app-password"
+  use_tls: true
 ```
 
 The users CSV has the following columns (no header variation permitted):
 
 ```
-userid, name, password
+userid, name, password, email, group, role
 ```
 
 Example:
 ```
-Z1234,firstname1 lastname1,abc123
-Z2345,firstname2 lastname2,xyz789
+Z1234,firstname1 lastname1,abc123,first@example.com,SCIENCE,Vetter
+Z2345,firstname2 lastname2,xyz789,second@example.com,ALL,Normal
 ```
 
 ---
@@ -69,9 +85,9 @@ Each Excel workbook uploaded by the admin must contain the following sheets:
 Contains the records to be reviewed or updated. The first row is the header. Required columns (at minimum):
 
 - `Owner` — user ID (e.g., `z1234`). A value of `ALL` means all authenticated users can see the record. This column is hidden from users.
-- `Record Vetter` — user ID of the assigned vetter who can vet and delete this record. May be empty initially; auto-assigned to vetter with fewest records or admin if no vetters exist.
+- `Group` — group name for vetter visibility. Vetters can see and vet records in their own group. A value of `ALL` means all vetters can see and vet the record. This column is hidden from users.
 - `Last Updated` — auto-populated datetime; format: `DD/MM/YYYY HH:MM:SS`.
-- `Record Status` — controlled vocabulary: `New`, `Updated`, `Old`, `Delete`. Existing records are set to `Old` on upload; new records added by users are set to `New` automatically.
+- `Record Status` — controlled vocabulary: `New`, `Updated`, `Old`, `Archived`. Existing records are set to `Old` on upload; new records added by users are set to `New` automatically.
 
 All other columns are defined by the Schema sheet.
 
@@ -140,6 +156,16 @@ Shown on first launch or when no config exists. Accepts upload of the YAML confi
 
 Standard username/password form using credentials from the config file. Issues a JWT with admin scope. Link accessible from top-right of every page.
 
+**IP Allowlist Security**
+- Admin login attempts are checked against the `admin_allowed_ips` list from the configuration file.
+- Each entry in the list is an IPv4 pattern where `*` acts as a wildcard for any octet. Examples:
+  - `"192.168.1.*"` — allows IPs in the 192.168.1.0/24 subnet
+  - `"10.0.*.*"` — allows IPs in the 10.0.0.0/16 range
+  - `"*.*.*.*"` — allows any IP (default)
+- IPv4-mapped IPv6 addresses (e.g., `::ffff:10.0.0.1`) are unwrapped to their IPv4 equivalent.
+- If the client IP does not match any pattern, the login is rejected with a 403 Forbidden error.
+- Default: `["*.*.*.*"]` (allows login from any IP). Restrict this in production for added security.
+
 ### Admin Dashboard (`/admin`)
 
 After login. Functions:
@@ -149,7 +175,7 @@ After login. Functions:
   - **Check for duplicates**: Reject upload if a file with the same filename already exists; display helpful error message directing admin to remove the existing file first.
   - Validate that both `Data` and `Schema` sheets exist.
   - Validate that every `Field Name` in Schema matches a column in Data.
-  - Validate that no column in Data is missing from Schema (warn but do not block for system columns: `Owner`, `Record Vetter`, `Last Updated`, `Record Status`).
+  - Validate that no column in Data is missing from Schema (warn but do not block for system columns: `Owner`, `Group`, `Last Updated`, `Record Status`).
   - Import the optional `Edit History` sheet if present, remapping record IDs to the newly assigned database IDs.
   - Display specific, field-level error messages if validation fails.
   - On success, persist data to PostgreSQL and display a confirmation message.
@@ -163,13 +189,13 @@ After login. Functions:
 **Data Access and Editing**
 - View and edit all records for any uploaded file (full access, not filtered by Owner).
 - Uses the same AG Grid interface as users but with Owner column visible and editable.
-- **Can edit all fields including the Record Vetter field** to reassign vetters to records.
+- **Can edit all fields including the Group field** to reassign vetter access to records.
 - **Can delete any record** by clicking the trash icon (🗑️) in the rightmost column. A confirmation is required. Deletions are recorded in the Edit History with `_ROW_DELETED` event.
 - **Record locks are not displayed** for admins. Locks are user-specific and do not restrict admin access. Admins can edit any record regardless of locks held by users.
 
 **Download**
 - Download any data file as an Excel workbook. The download includes three sheets:
-  1. **Data sheet**: Current state of all records with all columns (including Owner, Record Vetter, Last Updated, Record Status, and Record ID)
+  1. **Data sheet**: Current state of all records with all columns (including Owner, Group, Last Updated, Record Status, and Record ID)
   2. **Schema sheet**: Field definitions (original schema)
   3. **Edit History sheet**: Complete audit trail of all field changes with Record ID, Field Name, Old Value, New Value, Changed By (user ID), and Changed At (timestamp). Row additions and deletions are also included.
 - The file is fully compatible with re-uploading to a new ConduVet instance.
@@ -182,13 +208,13 @@ All reports are rendered on-screen as a table and downloadable as Excel files.
 
 | Report | Columns | Description |
 |---|---|---|
-| Currently Logged In Users | User ID, Name, Logged In At | Shows all users and admins with active sessions (where `logout_at IS NULL` in the `user_sessions` table). Sorted by most recent login first. Downloadable as Excel. |
+| Currently Logged In Users | User ID, Name, Logged In At | Shows all active sessions where `logout_at IS NULL`. A user may appear more than once if logged in from multiple devices. Sorted by most recent login first. Downloadable as Excel. |
 
 **File-Specific Reports** (select a file first):
 
 | Report | Columns | Description |
 |---|---|---|
-| By User | Owner, Total, New, Updated, Old, Delete | Record counts grouped by owner, broken down by status |
+| By User | Owner, Total, New, Updated, Old, Archived | Record counts grouped by owner, broken down by status |
 | By Record | ID, Owner, Status, Last Updated, Field Changes | One row per record with its edit count and last-updated timestamp |
 
 ---
@@ -201,7 +227,7 @@ All reports are rendered on-screen as a table and downloadable as Excel files.
 
 1. **PIN-Based Email Authentication (Primary)**
    - Users enter their **User ID** on the login page.
-   - System generates a random 5-digit PIN and sends it to `{userid}@{user_domain}` via configured SMTP.
+   - System generates a random 5-digit PIN and sends it to the email address stored for that user in `users.csv` via configured SMTP.
    - User receives the PIN via email and enters it on the login page to authenticate.
    - PINs expire after `pin_expiration_minutes` (default: 15, configured in `config.yaml`).
    - Requires SMTP configuration in `config.yaml` under the `smtp_config` section (host, port, username, optional password).
@@ -225,9 +251,11 @@ Displays one button per active data file uploaded by the admin. Button label is 
 
 #### Record Filtering
 
-- Display only records where `Owner` matches the logged-in user's userid or where `Owner` is `ALL`.
+- Normal users see records where `Owner` matches their userid or where `Owner` is `ALL`.
+- Vetters see records where `Group` matches their group or where `Group` is `ALL`.
+- Admins see all records.
 - The `Owner` column is hidden from the user view.
-- New records added by the user have `Owner` set to their userid.
+- New records added by the user have `Owner` set to their userid and `Group` set to their group.
 
 #### Grid Layout
 
@@ -246,11 +274,11 @@ Displays one button per active data file uploaded by the admin. Button label is 
 #### Vetting Workflow & Vetted-Lock
 
 - **Vetted field**: A `Boolean` field named `Vetted` (or legacy names `Vetting Status` / `Record Vetting Status`) represents the vetting approval state.
-  - Only the assigned **vetter** can change this field.
+  - Only vetters can change this field, and only for records in their group.
   - The owner and other users see it as read-only.
 - **Vetted-lock**: When the vetter sets `Vetted = true`, the record is locked for the **owner**. While vetted:
   - The owner cannot edit any data field or the Record Status.
-  - The vetter can still edit all fields including the Record Status.
+  - The vetter for that group can still edit all fields including the Record Status.
   - Admin can always edit all fields.
   - Locked cells are visually grayed out for the owner.
 - **Vetted-lock release**: The vetter unchecks `Vetted` to allow the owner to edit again.
@@ -258,7 +286,7 @@ Displays one button per active data file uploaded by the admin. Button label is 
 #### Record Status Editability
 
 - **Owner**: Can edit Record Status only when the record is not vetted (`Vetted = false`). Grayed out when vetted.
-- **Vetter**: Can always edit Record Status, regardless of vetted state.
+- **Vetter**: Can always edit Record Status for records in their group, regardless of vetted state.
 - **Admin**: Can always edit Record Status.
 - Record Status changes are tracked in the edit history.
 
@@ -325,14 +353,14 @@ Split into two columns:
 
 - **Add Record** button: Creates a new empty row with:
   - `Owner` set to current user's userid
+  - `Group` set to current user's group
   - `Record Status` set to `New`
-  - `Record Vetter` auto-assigned to vetter with fewest records in the file; or to admin account if no vetters exist
   - `Vetted` (Boolean) defaulted to `false`; or `Unvetted` if using a legacy List-type vetting field
-- **Record Vetter** (system field): Visible to admin only; shows the assigned vetter's userid.
-- **Vetted** field (Boolean): Only the assigned vetter can edit. Checking it locks the record for the owner.
-- **Record Status** field: Editable dropdown (`Old`, `Updated`, `Delete`, `New`). Owner-editable when not vetted; vetter-editable always.
+- **Group** (system field): Determines which vetter can see and vet the record. `ALL` means all vetters can see and vet it.
+- **Vetted** field (Boolean): Vetters can edit it for records in their group. Checking it locks the record for the owner.
+- **Record Status** field: Editable dropdown (`Old`, `Updated`, `Archived`, `New`). Owner-editable when not vetted; vetter-editable for records in their group.
 - **Last Updated** is read-only in the grid; auto-populated with current datetime on submit.
-- **Delete button** (row-level): Assigned vetter can delete their records; confirmation required. Deletion is recorded in edit history with the original record ID preserved in `old_value`.
+- **Delete button** (row-level): Vetters can delete records in their group; confirmation required. Deletion is recorded in edit history with the original record ID preserved in `old_value`.
 
 #### Submit
 
@@ -351,14 +379,14 @@ Split into two columns:
 Stores the active configuration. Single row.
 
 ```
-id, title, admin_account, admin_pass_hash, backup_dir, auto_logout_minutes, created_at, updated_at
+id, title, admin_account, admin_pass_hash, backup_dir, auto_logout_minutes, pin_expiration_minutes, smtp_config, created_at, updated_at
 ```
 
 ### `app_users`
 Populated from the users CSV.
 
 ```
-userid (PK), name, password_hash
+userid (PK), name, email, group_name, role, password_hash
 ```
 
 ### `data_files`
@@ -379,7 +407,7 @@ id (PK), file_id (FK → data_files), field_name, description, data_type, sample
 One row per data record per file. Data stored as JSONB.
 
 ```
-id (PK), file_id (FK → data_files), owner, vetter, record_data (JSONB), record_status,
+id (PK), file_id (FK → data_files), owner, group_name, record_data (JSONB), record_status,
 last_updated, created_at, is_locked, locked_by, locked_at
 ```
 
@@ -442,13 +470,12 @@ id (PK), userid, login_at, logout_at (nullable), last_activity
 ## Key Features Summary
 
 ### Record Vetting Workflow
-- **Vetter assignment**: Auto-assigned on record creation or manually assigned by admin.
-- **Vetting permissions**: Only assigned vetter can edit the `Vetted` (Boolean) field.
-- **Vetted-lock**: When `Vetted = true`, the owner is locked out of all edits. Vetter and admin retain full edit access.
+- **Vetting permissions**: Only vetters can edit the `Vetted` (Boolean) field, and only for records in their group.
+- **Vetted-lock**: When `Vetted = true`, the owner is locked out of all edits. The matching vetter group and admin retain full edit access.
 - **Record deletion**: 
-  - In **user mode**: Only the assigned vetter can delete their assigned records.
+  - In **user mode**: Only vetters can delete records in their group.
   - In **admin mode**: Admins can delete any record from any file. Deletions are recorded in the audit trail as `_ROW_DELETED` events.
-- **Flexible vetter management**: Admin can reassign vetters or change record ownership at any time.
+- **Flexible access management**: Admin can change ownership, group, and user role at any time.
 
 ### Record Status
 - Owner-editable when the record is not vetted; vetter and admin can always edit.
@@ -461,7 +488,7 @@ id (PK), userid, login_at, logout_at (nullable), last_activity
 
 ### Session Management & Tracking
 - **Session tracking**: Every user and admin login creates a `user_sessions` record. Logouts (explicit or via timeout) mark the session with a `logout_at` timestamp.
-- **Active session reporting**: The "Currently Logged In Users" report queries sessions where `logout_at IS NULL` to show active users and admins.
+- **Active session reporting**: The "Currently Logged In Users" report queries sessions where `logout_at IS NULL` to show active sessions. A single user can have multiple active sessions from different devices.
 - **Configurable auto-logout timer** (default: 30 minutes, range: 1-480, configured in `config.yaml`).
 - **Activity monitoring**: Timer resets on user interaction (click, keypress, mousemove, scroll).
 - **Graceful cleanup on timeout**: Locks released, user logged out, session marked with logout timestamp.
@@ -507,7 +534,8 @@ The following is extracted directly from the Schema sheet of the reference file.
 - `Type of international partner contribution = I or B` → makes International_Partner_Intellectual Contribution required
 - `International_Partner_Intellectual Contribution = O` → makes the _other field required
 
-**Users with `ALL` records:** All authenticated users should see records where Owner = `ALL`.
+**Users with `ALL` owner:** All authenticated users should see records where Owner = `ALL`.
+**Vetters with `ALL` group:** All vetters should see and vet records where Group = `ALL`.
 **Owner matching:** Case-insensitive match on the userid.
 
 ---
@@ -533,7 +561,10 @@ conduvet/
 │   ├── services/
 │   │   ├── excel_service.py      # import/export/validation
 │   │   ├── backup_service.py     # APScheduler jobs
-│   │   └── schema_parser.py      # data type + depends-on parsing
+│   │   ├── schema_parser.py      # data type + depends-on parsing
+│   │   ├── access_control.py     # permission checks (roles, groups, visibility)
+│   │   ├── session_service.py    # session tracking and auto-logout
+│   │   └── email_service.py      # PIN email delivery
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/

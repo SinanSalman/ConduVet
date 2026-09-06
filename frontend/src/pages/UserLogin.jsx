@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { userLogin, requestPIN, verifyPIN, setUserToken, setUserId, setUserName, getAppTitle } from '../api'
+import {
+  userLogin,
+  requestPIN,
+  verifyPIN,
+  setUserToken,
+  setUserId,
+  setUserName,
+  setUserRole,
+  setUserGroup,
+  getAppTitle,
+} from '../api'
 
 export default function UserLogin() {
   const navigate = useNavigate()
@@ -58,6 +68,12 @@ export default function UserLogin() {
       if (data.userid) {
         setUserId(data.userid)
       }
+      if (data.role) {
+        setUserRole(data.role)
+      }
+      if (data.group) {
+        setUserGroup(data.group)
+      }
       navigate('/dashboard')
     } catch (err) {
       setError(err.response?.data?.detail || 'Invalid PIN. Please try again.')
@@ -78,6 +94,12 @@ export default function UserLogin() {
       }
       if (data.userid) {
         setUserId(data.userid)
+      }
+      if (data.role) {
+        setUserRole(data.role)
+      }
+      if (data.group) {
+        setUserGroup(data.group)
       }
       navigate('/dashboard')
     } catch (err) {

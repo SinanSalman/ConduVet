@@ -1,0 +1,31 @@
+# Binary and large files
+*.xlsx
+*.docx
+*.zip
+*.so
+*.pyc
+
+# Sensitive data and live data directories
+_Data/
+_Test Data/
+
+# Node modules and build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# OS and IDE
+.DS_Store
+.git/
+
+# Docker tunnel config (has secrets)
+docker-compose_tunnel.yml

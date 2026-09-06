@@ -18,9 +18,9 @@ class AppConfig(Base):
     users_file_path: Mapped[str] = mapped_column(String(1024), nullable=True)
     backup_dir: Mapped[str] = mapped_column(String(1024), nullable=True)
     auto_logout_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
-    user_domain: Mapped[str] = mapped_column(String(255), nullable=False, default="example.com")
     pin_expiration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     smtp_config: Mapped[dict] = mapped_column(JSONB, nullable=True, default={})
+    admin_allowed_ips: Mapped[list] = mapped_column(JSONB, nullable=False, default=["*.*.*.*"])
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -38,6 +38,9 @@ class AppUser(Base):
     # stored uppercase for case-insensitive match
     userid: Mapped[str] = mapped_column(String(255), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False, default="ALL")
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Normal")
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
@@ -89,8 +92,7 @@ class DataRecord(Base):
         Integer, ForeignKey("data_files.id"), nullable=False, index=True
     )
     owner: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    # vetter holds the userid of the person who can vet this record (change
-    # Record Vetting Status).  Null means no vetter is assigned.
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False, default="ALL", index=True)
     vetter: Mapped[str] = mapped_column(String(255), nullable=True, index=True)
     record_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     record_status: Mapped[str] = mapped_column(

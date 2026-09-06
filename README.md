@@ -24,7 +24,7 @@ A web application for vetting crowd-sourced tabular data. Admins upload Excel wo
 
 ## How It Works
 
-1. The admin uploads a **YAML config** (title, credentials) and a **users CSV** (userid, name, password) on first launch.
+1. The admin uploads a **YAML config** (title, credentials) and a **users CSV** (`userid`, `name`, `password`, `email`, `group`, `role`) on first launch.
 2. The admin uploads one or more **Excel workbooks**. Each workbook has a `Data` sheet (the records), a `Schema` sheet (field definitions, validation rules, help text), and an optional `Edit History` sheet (pre-existing audit trail).
 3. Users log in and see the files assigned to them. They open a file, edit their records in a spreadsheet-like grid, and submit.
 4. The grid enforces the schema in real time — field types, allowed values, length limits, and conditional requirements.
@@ -69,7 +69,10 @@ ConduVet/
 │   ├── services/
 │   │   ├── excel_service.py      # Excel import / export (Data + Schema + Edit History)
 │   │   ├── backup_service.py     # Scheduled backup jobs
-│   │   └── schema_parser.py      # Data type and depends-on parsing
+│   │   ├── schema_parser.py      # Data type and depends-on parsing
+│   │   ├── access_control.py     # Permission checks (roles, groups, visibility)
+│   │   ├── session_service.py    # Session tracking and auto-logout
+│   │   └── email_service.py      # PIN email delivery
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
@@ -187,8 +190,12 @@ admin_pass: "choose-a-strong-password"
 backup_dir: "./backups"
 auto_logout_minutes: 30
 
+# Admin login IP allowlist. Each entry is an IPv4 pattern where '*' is a wildcard octet.
+# Examples: "192.168.1.*" (single subnet), "10.0.*.*" (wider range), "*.*.*.*" (any IP).
+admin_allowed_ips:
+  - "*.*.*.*"  # Allow logins from any IP (set more restrictive patterns for security)
+
 # PIN authentication settings
-user_domain: "example.com"   # Email domain for PIN emails (userid@domain)
 pin_expiration_minutes: 15          # How long PINs remain valid (in minutes)
 
 # SMTP configuration for PIN email delivery
@@ -207,7 +214,7 @@ smtp_config:
 | `admin_pass` | Admin password. Stored as a bcrypt hash. | ✓ | — |
 | `backup_dir` | Directory where automatic Excel backups are written. Created if it does not exist. | ✓ | — |
 | `auto_logout_minutes` | Inactivity timeout in minutes (range: 1–480). | optional | 30 |
-| `user_domain` | Email domain for PIN emails (e.g., `userid@example.com`). | optional | `example.com` |
+| `admin_allowed_ips` | List of IPv4 patterns allowed to access admin login (e.g., `["192.168.1.*", "10.0.0.1"]`). Use `["*.*.*.*"]` to allow any IP. | optional | `["*.*.*.*"]` |
 | `pin_expiration_minutes` | How long PINs remain valid (range: 1–1440 minutes). | optional | 15 |
 | `smtp_config` | Email server configuration for PIN delivery. See below. | optional* | {} |
 
@@ -228,7 +235,6 @@ title: "My Instance"
 admin_account: "admin"
 admin_pass: "strong-password"
 backup_dir: "./backups"
-user_domain: "example.com"
 pin_expiration_minutes: 15
 
 smtp_config:
@@ -241,7 +247,6 @@ smtp_config:
 
 *Office 365:*
 ```yaml
-user_domain: "company.ae"
 pin_expiration_minutes: 20
 
 smtp_config:
@@ -254,7 +259,6 @@ smtp_config:
 
 *Custom SMTP Server (with authentication):*
 ```yaml
-user_domain: "yourdomain.com"
 pin_expiration_minutes: 10
 
 smtp_config:
@@ -267,7 +271,6 @@ smtp_config:
 
 *No-Auth SMTP Server (local or unauthenticated):*
 ```yaml
-user_domain: "yourdomain.com"
 pin_expiration_minutes: 15
 
 smtp_config:
@@ -289,6 +292,9 @@ Z5678,John Doe,xyz789
 - `userid` — used as the login username and to match record ownership. Case-insensitive.
 - `name` — display name shown after login.
 - `password` — stored as a bcrypt hash on upload.
+- `email` — dedicated email address used for sending the login PIN.
+- `group` — record visibility/vetting group for the user. Use `ALL` for global visibility where supported.
+- `role` — either `Normal` or `Vetter`.
 
 ### 3. Upload on the Setup page
 
@@ -309,9 +315,9 @@ The records to be reviewed. First row is the header. Required system columns:
 | Column | Description |
 |---|---|
 | `Owner` | User ID of the record owner, or `ALL` for all users. Hidden from users. |
-| `Record Vetter` | User ID of the assigned vetter. |
+| `Group` | Group used to determine which vetters can see and vet the record. `ALL` means all vetters can see and vet it. Hidden from users. |
 | `Last Updated` | Auto-populated on submit. Format: `DD/MM/YYYY HH:MM:SS`. |
-| `Record Status` | `New`, `Updated`, `Old`, or `Delete`. Existing records default to `Old` on upload. |
+| `Record Status` | `New`, `Updated`, `Old`, or `Archived`. Existing records default to `Old` on upload. |
 
 All other columns are defined by the Schema sheet.
 
@@ -395,13 +401,13 @@ Access the admin interface at `/admin/login` (link in the top-right corner of ev
 
 | Report | Columns | Description |
 |---|---|---|
-| Currently Logged In Users | User ID, Name, Logged In At | Shows all users and admins with active sessions. Sorted by most recent login. |
+| Currently Logged In Users | User ID, Name, Logged In At | Shows all active sessions. A user may appear more than once if they are logged in from multiple devices. Sorted by most recent login. |
 
 **File-Specific Reports** (select a file first):
 
 | Report | Columns | Description |
 |---|---|---|
-| By User | Owner, Total, New, Updated, Old, Delete | Record counts per owner, broken down by status |
+| By User | Owner, Total, New, Updated, Old, Archived | Record counts per owner, broken down by status |
 | By Record | ID, Owner, Status, Last Updated, Field Changes | Per-record details with edit count |
 
 Each report renders as a table on screen and can be downloaded as Excel.
@@ -441,9 +447,9 @@ The **context panel** at the bottom shows:
 
 ### Vetting & Vetted-Lock
 
-- The **Vetted** checkbox (on records where you are the assigned vetter) lets you mark a record as approved.
-- Once **Vetted = true**, the record owner **cannot edit any fields** until you uncheck it. You (the vetter) retain full edit access regardless.
-- Record Status is editable by the owner only when the record is not vetted; you can always edit it.
+- The **Vetted** checkbox (on records in your group) lets you mark a record as approved.
+- Once **Vetted = true**, the record owner **cannot edit any fields** until you uncheck it. You (the vetter) retain full edit access for records in your group.
+- Record Status is editable by the owner only when the record is not vetted; you can always edit it for records in your group.
 
 ### Record Locking
 
@@ -466,7 +472,6 @@ Click **Submit** at the top of the grid. Full validation runs before saving. Fix
 | `DATABASE_URL` | `postgresql://conduvet:conduvet@db:5432/conduvet` | PostgreSQL connection string. |
 | `SECRET_KEY` | `conduvet-secret-key-change-in-production` | JWT signing key. **Must be changed in production.** |
 | `CORS_ORIGINS` | `*` | Comma-separated list of allowed origins, or `*` for all. |
-| `USER_DOMAIN` | (from config.yaml) | Optional override for email domain in PINs. Normally configured in `smtp_config.user_domain`. |
 | `PIN_EXPIRATION_MINUTES` | (from config.yaml) | Optional override for PIN expiration. Normally configured in `smtp_config.pin_expiration_minutes`. |
 
 **Note:** SMTP configuration (host, port, username, password, TLS) is no longer set via environment variables. Configure it in `config.yaml` under the `smtp_config` section during admin setup or via the Configuration tab in the Admin Dashboard.
@@ -493,7 +498,7 @@ ConduVet supports two authentication methods:
 
 1. **PIN-Based Email Authentication (Primary)**
    - Users enter their User ID on the login page
-   - A random 5-digit PIN is sent to `{userid}@{user_domain}` (configured in config.yaml)
+   - A random 5-digit PIN is sent to the email address stored for that user in `users.csv`
    - Users enter the PIN to log in
    - PINs expire after `pin_expiration_minutes` (default: 15 minutes, configured in config.yaml)
    - Requires SMTP configuration in `config.yaml` under `smtp_config` section

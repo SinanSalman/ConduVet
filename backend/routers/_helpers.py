@@ -21,7 +21,7 @@ def record_to_response(record: DataRecord) -> dict:
     return {
         "id": record.id,
         "owner": record.owner,
-        "vetter": record.vetter,
+        "group": record.group_name,
         "record_status": record.record_status,
         "last_updated": record.last_updated.isoformat() if record.last_updated else None,
         "created_at": record.created_at.isoformat() if record.created_at else None,

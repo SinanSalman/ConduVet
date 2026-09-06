@@ -9,6 +9,7 @@ get_latest_from_repository.sh
 _Data/
 .claude/
 .antigravitycli/
+docker-compose_tunnel.yml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

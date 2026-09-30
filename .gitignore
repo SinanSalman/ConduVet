@@ -8,9 +8,15 @@ get_latest_from_repository.sh
 # Sensitive data
 _Data/
 _Test Data/
+_Data_Collection/
 .claude/
 .antigravitycli/
 docker-compose_tunnel.yml
+docker-compose_no_tunnel.yml
+docker-compose_samer.yml
+server.crt
+server.key
+nginx_samer.conf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

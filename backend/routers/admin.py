@@ -290,15 +290,50 @@ async def setup(
     users_file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    stage = "checking setup state"
+    yaml_name = yaml_file.filename or "<unnamed>"
+    users_name = users_file.filename or "<unnamed>"
+    logger.info("Initial setup started (yaml=%s, users_csv=%s)", yaml_name, users_name)
     # Only allow setup once
     if db.query(AppConfig).first() is not None:
+        logger.warning("Initial setup rejected: application is already configured")
         raise HTTPException(status_code=400, detail="Application is already configured.")
 
-    yaml_content = await yaml_file.read()
-    config_data = _validate_yaml(yaml_content)
+    try:
+        stage = "reading configuration YAML"
+        yaml_content = await yaml_file.read()
+        stage = "validating configuration YAML"
+        config_data = _validate_yaml(yaml_content)
 
-    users_content = await users_file.read()
-    users = _parse_users_csv(users_content)
+        stage = "reading users CSV"
+        users_content = await users_file.read()
+        stage = "validating users CSV"
+        users = _parse_users_csv(users_content)
+    except HTTPException as exc:
+        # Do not log parser details: YAML parser messages can include source text,
+        # which may contain the administrator's password.
+        safe_reason = None
+        if isinstance(exc.detail, str) and (
+            "missing required key(s)" in exc.detail
+            or "missing required column(s)" in exc.detail
+            or "contains no valid user rows" in exc.detail
+            or "must be at least 6 characters" in exc.detail
+            or "must be a YAML mapping" in exc.detail
+            or "must be an integer" in exc.detail
+            or "must be a YAML mapping" in exc.detail
+        ):
+            # These validation messages identify schema requirements without
+            # including submitted secret values.
+            safe_reason = exc.detail.split("\n", 1)[0]
+        logger.warning(
+            "Initial setup validation failed at %s (yaml=%s, users_csv=%s, status=%d%s)",
+            stage, yaml_name, users_name, exc.status_code,
+            f", reason={safe_reason}" if safe_reason else "",
+        )
+        raise
+    except Exception:
+        logger.exception("Initial setup failed at %s (yaml=%s, users_csv=%s)", stage, yaml_name, users_name)
+        raise
 
     # Save users file to disk
     users_dir = os.getenv("USERS_FILE_DIR", "/data/users")
@@ -337,7 +372,14 @@ async def setup(
             password_hash=pwd_hash,
         ))
 
-    db.commit()
+    try:
+        stage = "saving setup to the database"
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Initial setup failed at %s", stage)
+        raise
+    logger.info("Initial setup completed successfully (users=%d)", len(users))
     return {"ok": True}
 
 

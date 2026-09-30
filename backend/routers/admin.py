@@ -399,7 +399,11 @@ async def admin_login(
     if config is None:
         raise HTTPException(status_code=503, detail="not_configured")
 
-    client_ip = request.client.host if request.client else ""
+    # Nginx overwrites X-Real-IP with the address it received from the client.
+    # The backend's socket peer is the Docker network gateway/NAT address.
+    client_ip = (request.headers.get("x-real-ip") or "").strip()
+    if not client_ip:
+        client_ip = request.client.host if request.client else ""
     allowed_ips = config.admin_allowed_ips or ["*.*.*.*"]
     if not _ip_allowed(client_ip, allowed_ips):
         logger.warning("Admin login blocked for IP %s", client_ip)
